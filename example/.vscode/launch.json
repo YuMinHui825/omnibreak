@@ -1,0 +1,54 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "omnibreak",
+      "request": "launch",
+      "name": "OmniBreak: Remote Debug",
+      "targetHost": "192.168.64.2",
+      "targetPort": 2345,
+      "sshUser": "ubuntu",
+      "sshPort": 22,
+      "binaryPath": "/tmp/host",
+      "gdbPath": "/usr/bin/gdb-multiarch",
+      "nonStopMode": false,
+      "sourceFileMap": {
+        "/tmp": "/Users/yuminhui/olall/code/omnibreak/example/src"
+      }
+    },
+    {
+      "type": "omnibreak",
+      "request": "launch",
+      "name": "OmniBreak: Deploy & Debug",
+      "targetHost": "192.168.1.100",
+      "targetPort": 2345,
+      "sshUser": "root",
+      "sshPort": 22,
+      "deploySource": "/home/builder/build_arm64/myapp",
+      "binaryPath": "/opt/app/myapp",
+      "autoDeploy": true,
+      "gdbPath": "/usr/bin/gdb-multiarch",
+      "nonStopMode": true,
+      "sourceFileMap": {
+        "/home/builder/project": "${workspaceFolder}"
+      },
+      "remoteLogPath": "/var/log/myapp.log"
+    },
+    {
+      "type": "omnibreak",
+      "request": "launch",
+      "name": "OmniBreak: Debug .so Demo",
+      "targetHost": "192.168.64.2",
+      "targetPort": 2345,
+      "sshUser": "ubuntu",
+      "sshPort": 22,
+      "binaryPath": "/tmp/host",
+      "gdbPath": "/usr/bin/gdb-multiarch",
+      "nonStopMode": false,
+      "sourceFileMap": {
+        "/tmp": "/Users/yuminhui/olall/code/omnibreak/example/src"
+      },
+      "skipGdbserverStart": true
+    }
+  ]
+}

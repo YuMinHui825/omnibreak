@@ -1,0 +1,11 @@
+.vscode/**
+.gitignore
+src/**
+tsconfig.json
+node_modules/**
+!node_modules/@vscode/debugadapter/**
+!node_modules/@vscode/debugprotocol/**
+example/**
+scripts/**
+docs/**
+test/**
