@@ -1,3 +1,5 @@
+<p align="center"><img src="icon.png" width="128" alt="OmniBreak" /></p>
+
 # OmniBreak
 
 > Linux 远程可视化调试——任意位置打断点，任意线程，任意进程。  
@@ -291,4 +293,4 @@ MIT
 
 ## 作者
 
-[shibu](https://github.com/YuMinHui825/omnibreak)
+[shibu](https://github.com/YuMinHui825)

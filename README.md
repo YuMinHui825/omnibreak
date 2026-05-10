@@ -1,3 +1,5 @@
+<p align="center"><img src="icon.png" width="128" alt="OmniBreak" /></p>
+
 # OmniBreak
 
 > Visual remote debugging for Linux — break anywhere, any thread, any process.  
@@ -306,4 +308,4 @@ MIT
 
 ## Author
 
-[shibu](https://github.com/YuMinHui825/omnibreak)
+[shibu](https://github.com/YuMinHui825)
