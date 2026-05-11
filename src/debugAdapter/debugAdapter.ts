@@ -47,7 +47,7 @@ class OmniBreakSession extends DebugSession {
       else if (d.includes('end-stepping-range')) reason = 'step';
       else if (d.includes('signal-received')) {
         reason = 'exception';
-        this.gdb!.sendCommand('-stack-list-frames 0 500').then(r => {
+        this.gdb!.sendCommand('-stack-list-frames 0 200').then(r => {
           this.sendEvent(new OutputEvent('\n=== CRASH BACKTRACE ===\n', 'console'));
           for (const f of require('./gdbMiParser').parseFrames(r.data)) {
             const ff = f['fullname'] || f['file'] || '??';
@@ -68,23 +68,56 @@ class OmniBreakSession extends DebugSession {
     this.gdb.on('exit', () => this.sendEvent(new TerminatedEvent()));
   }
 
+  private esc(s: string): string { return s.replace(/'/g, "'\\''"); }
+
   private sshExec(c: ReturnType<typeof this.resolve>, cmd: string): void {
     const { execSync } = require('child_process');
     const pfx = c.pwd
-      ? `sshpass -p '${c.pwd}' ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -p ${c.sshPort} ${c.user}@${c.host}`
-      : `ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -p ${c.sshPort} ${c.user}@${c.host}`;
+      ? `sshpass -p '${this.esc(c.pwd)}' ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -p ${c.sshPort} ${this.esc(c.user)}@${this.esc(c.host)}`
+      : `ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -p ${c.sshPort} ${this.esc(c.user)}@${this.esc(c.host)}`;
     try { execSync(`${pfx} ${cmd}`, { timeout: 10000 }); } catch { /* best effort */ }
   }
 
   private async applyPendingBreakpoints(): Promise<void> {
+    await this.gdb!.sendCommand('-gdb-set breakpoint pending on').catch(() => {});
     for (const args of this.pendingBreakpoints)
       for (const bp of args.breakpoints || []) {
+        const lp = args.source.path || ''; const gp = lp ? this.sourceMapper.localToCompile(lp) : lp;
         try {
-          const lp = args.source.path || ''; const gp = lp ? this.sourceMapper.localToCompile(lp) : lp;
-          await this.gdb!.sendCommand(bp.condition ? `-break-insert -f ${gp}:${bp.line} -c "${bp.condition}"` : `-break-insert -f ${gp}:${bp.line}`);
-        } catch {}
+          const result = await this.gdb!.sendCommand(bp.condition ? `-break-insert -f ${gp}:${bp.line} -c "${bp.condition}"` : `-break-insert -f ${gp}:${bp.line}`);
+          this.sendEvent(new OutputEvent(`Breakpoint: ${gp}:${bp.line} -> ${result.data}\n`, 'console'));
+        } catch (e: any) { this.sendEvent(new OutputEvent(`Breakpoint FAIL: ${gp}:${bp.line} -> ${e.message}\n`, 'stderr')); }
       }
     this.pendingBreakpoints = [];
+  }
+
+  // Deploy helper — used by both launch and attach
+  private doDeploy(c: ReturnType<typeof this.resolve>, args: OmniBreakConfig): void {
+    if (!args.autoDeploy || !args.deploySource) return;
+    this.sendEvent(new OutputEvent(`Deploying ${args.deploySource} -> ${c.host}:${c.rbin}...\n`, 'console'));
+    try {
+      const sc = c.pwd
+        ? `sshpass -p '${this.esc(c.pwd)}' scp -o StrictHostKeyChecking=no ${this.esc(args.deploySource)} ${this.esc(c.user)}@${this.esc(c.host)}:${this.esc(c.rbin)}`
+        : `scp -o StrictHostKeyChecking=no ${this.esc(args.deploySource)} ${this.esc(c.user)}@${this.esc(c.host)}:${this.esc(c.rbin)}`;
+      require('child_process').execSync(sc, { timeout: 30000 });
+      this.sendEvent(new OutputEvent('Deploy done\n', 'console'));
+    } catch (e: any) { this.sendEvent(new OutputEvent(`Deploy failed: ${e.message}\n`, 'stderr')); }
+  }
+
+  // Start gdbserver + tail output — used by both launch and attach
+  private async startGdbserver(c: ReturnType<typeof this.resolve>, args: OmniBreakConfig, gdbsrvCmd: string): Promise<void> {
+    const sudo = args.useSudo ? 'sudo ' : '';
+    this.sendEvent(new OutputEvent(`Starting gdbserver on ${c.host}...\n`, 'console'));
+    this.sshExec(c, `${sudo}"pkill -x gdbserver 2>/dev/null || true; rm -f /tmp/omnibreak_output.log; setsid stdbuf -o0 gdbserver ${gdbsrvCmd} >/tmp/omnibreak_output.log 2>&1 &"`);
+    await new Promise<void>((r) => setTimeout(r, 1500));
+
+    const { spawn } = require('child_process');
+    const targs = c.pwd
+      ? ['sshpass', '-p', c.pwd, 'ssh', '-o', 'StrictHostKeyChecking=no', '-p', String(c.sshPort), `${c.user}@${c.host}`, 'tail -f /tmp/omnibreak_output.log']
+      : ['ssh', '-o', 'StrictHostKeyChecking=no', '-p', String(c.sshPort), `${c.user}@${c.host}`, 'tail -f /tmp/omnibreak_output.log'];
+    const tail = spawn(targs[0], targs.slice(1), { stdio: ['ignore', 'pipe', 'pipe'] });
+    tail.stdout?.on('data', (d: Buffer) => { for (const l of d.toString().split('\n')) if (l.trim()) this.sendEvent(new OutputEvent(l + '\n', 'console')); });
+    this.gdb!.on('exit', () => { try { tail.kill(); } catch {} });
   }
 
   // ═══ LAUNCH ═══
@@ -93,7 +126,11 @@ class OmniBreakSession extends DebugSession {
     this.sourceMapper = new SourceMapper(args.sourceFileMap || {});
     this.firstStop = true; this.pendingBreakpoints = []; this.binaryLoaded = false;
     const useSsh = c.host !== 'localhost' && c.host !== '127.0.0.1';
-    this.gdb = new GdbMiClient({ gdbPath: c.gdb, sshRemote: useSsh ? { host: c.host, user: c.user, port: c.sshPort } : undefined });
+    const gdbOpts: GdbLaunchOptions = {
+      gdbPath: c.gdb,
+      sshRemote: useSsh ? { host: c.host, user: c.user, port: c.sshPort, password: c.pwd } : undefined,
+    };
+    this.gdb = new GdbMiClient(gdbOpts);
     this.setupGdbEvents();
     this.launchResolve = null;
     const wait = new Promise<void>((r) => { this.launchResolve = r; });
@@ -103,55 +140,13 @@ class OmniBreakSession extends DebugSession {
       if (c.nonStop) await this.gdb.sendCommand('-gdb-set non-stop on');
 
       if (useSsh) {
-        if (args.autoDeploy && args.deploySource) {
-          this.sendEvent(new OutputEvent(`Deploying ${args.deploySource} -> ${c.host}:${c.rbin}...\n`, 'console'));
-          try {
-            const sc = c.pwd
-              ? `sshpass -p '${c.pwd}' scp -o StrictHostKeyChecking=no ${args.deploySource} ${c.user}@${c.host}:${c.rbin}`
-              : `scp -o StrictHostKeyChecking=no ${args.deploySource} ${c.user}@${c.host}:${c.rbin}`;
-            require('child_process').execSync(sc, { timeout: 30000 });
-            this.sendEvent(new OutputEvent('Deploy done\n', 'console'));
-          } catch (e: any) { this.sendEvent(new OutputEvent(`Deploy failed: ${e.message}\n`, 'stderr')); }
-        }
-
-        // Auto-detect: try connecting first, start gdbserver if needed
-        let gdbsrvRunning = false;
-        try {
-          await this.gdb.sendCommand(`-target-select remote localhost:${c.port}`);
-          gdbsrvRunning = true;
-          this.sendEvent(new OutputEvent(`Connected to existing gdbserver\n`, 'console'));
-        } catch {
-          try { await this.gdb.sendCommand(`-target-select extended-remote localhost:${c.port}`); gdbsrvRunning = true; this.sendEvent(new OutputEvent(`Connected to existing gdbserver (multi)\n`, 'console')); }
-          catch { /* not running */ }
-        }
-        if (!gdbsrvRunning) {
-          this.sendEvent(new OutputEvent(`Starting gdbserver on ${c.host}...\n`, 'console'));
-          this.sshExec(c, `"pkill -x gdbserver 2>/dev/null || true; rm -f /tmp/omnibreak_output.log; setsid stdbuf -o0 gdbserver --multi :${c.port} >/tmp/omnibreak_output.log 2>&1 &"`);
-          await new Promise<void>((r) => setTimeout(r, 1500));
-          await this.gdb.sendCommand(`-target-select extended-remote localhost:${c.port}`);
-        }
-
-        const { spawn } = require('child_process');
-        const targs = c.pwd
-          ? ['sshpass', '-p', c.pwd, 'ssh', '-o', 'StrictHostKeyChecking=no', '-p', String(c.sshPort), `${c.user}@${c.host}`, 'tail -f /tmp/omnibreak_output.log']
-          : ['ssh', '-o', 'StrictHostKeyChecking=no', '-p', String(c.sshPort), `${c.user}@${c.host}`, 'tail -f /tmp/omnibreak_output.log'];
-        const tail = spawn(targs[0], targs.slice(1), { stdio: ['ignore', 'pipe', 'pipe'] });
-        tail.stdout?.on('data', (d: Buffer) => { for (const l of d.toString().split('\n')) if (l.trim()) this.sendEvent(new OutputEvent(l + '\n', 'console')); });
-        this.gdb!.on('exit', () => { try { tail.kill(); } catch {} });
-
+        this.doDeploy(c, args);
+        await this.startGdbserver(c, args, `--multi :${c.port}`);
         await this.gdb.sendCommand(`-target-select extended-remote localhost:${c.port}`);
-        if (c.bin) { await this.gdb.sendCommand(`-file-exec-and-symbols ${c.bin}`); }
-        
+        if (c.bin) { await this.gdb.sendCommand(`-file-exec-and-symbols ${c.bin}`); await this.gdb.sendCommand(`-interpreter-exec console "set remote exec-file ${c.rbin}"`); }
         this.binaryLoaded = true;
         await this.applyPendingBreakpoints();
-        if (gdbsrvRunning) {
-          // Already-running gdbserver — program is executing, just continue
-          this.sendEvent(new OutputEvent('Program already running, continuing...\n', 'console'));
-        } else {
-          // We started gdbserver — set exec-file and start
-          await this.gdb.sendCommand(`-interpreter-exec console "set remote exec-file ${c.rbin}"`);
-          await this.gdb.sendCommand('-exec-run');
-        }
+        await this.gdb.sendCommand('-exec-run');
       } else {
         if (c.bin) await this.gdb.sendCommand(`-file-exec-and-symbols ${c.bin}`);
         await this.gdb.sendCommand(`-target-select remote localhost:${c.port}`);
@@ -169,7 +164,11 @@ class OmniBreakSession extends DebugSession {
     this.sourceMapper = new SourceMapper(args.sourceFileMap || {});
     this.firstStop = true; this.pendingBreakpoints = []; this.binaryLoaded = false;
     const useSsh = c.host !== 'localhost';
-    this.gdb = new GdbMiClient({ gdbPath: c.gdb, sshRemote: useSsh ? { host: c.host, user: c.user, port: c.sshPort } : undefined });
+    const gdbOpts: GdbLaunchOptions = {
+      gdbPath: c.gdb,
+      sshRemote: useSsh ? { host: c.host, user: c.user, port: c.sshPort, password: c.pwd } : undefined,
+    };
+    this.gdb = new GdbMiClient(gdbOpts);
     this.setupGdbEvents();
     this.launchResolve = null;
     const wait = new Promise<void>((r) => { this.launchResolve = r; });
@@ -181,31 +180,25 @@ class OmniBreakSession extends DebugSession {
       if (c.bin) await this.gdb.sendCommand(`-file-exec-and-symbols ${c.bin}`);
 
       if (useSsh) {
+        // Auto-deploy before attach (same as launch)
+        this.doDeploy(c, args);
+
         const { execSync } = require('child_process');
         const pfx = c.pwd
-          ? `sshpass -p '${c.pwd}' ssh -o StrictHostKeyChecking=no -p ${c.sshPort} ${c.user}@${c.host}`
-          : `ssh -o StrictHostKeyChecking=no -p ${c.sshPort} ${c.user}@${c.host}`;
+          ? `sshpass -p '${this.esc(c.pwd)}' ssh -o StrictHostKeyChecking=no -p ${c.sshPort} ${this.esc(c.user)}@${this.esc(c.host)}`
+          : `ssh -o StrictHostKeyChecking=no -p ${c.sshPort} ${this.esc(c.user)}@${this.esc(c.host)}`;
         let pid = String(args.pid || '');
         if (!pid && args.processName) {
-          try { pid = execSync(`${pfx} "pgrep -x '${args.processName}' | head -1"`, { timeout: 3000, encoding: 'utf8' }).trim(); } catch {}
+          try { pid = execSync(`${pfx} "pgrep -f '${this.esc(args.processName)}' | head -1"`, { timeout: 3000, encoding: 'utf8' }).trim(); } catch {}
         }
         if (!pid) throw new Error(`Process '${args.processName || ''}' not found`);
-        this.sendEvent(new OutputEvent(`Attaching to PID ${pid} on ${c.host}...\n`, 'console'));
-        this.sshExec(c, `"setsid stdbuf -o0 gdbserver --attach :${c.port} ${pid} >/tmp/omnibreak_output.log 2>&1 &"`);
-        await new Promise<void>((r) => setTimeout(r, 1500));
 
-        const { spawn } = require('child_process');
-        const targs = c.pwd
-          ? ['sshpass', '-p', c.pwd, 'ssh', '-o', 'StrictHostKeyChecking=no', '-p', String(c.sshPort), `${c.user}@${c.host}`, 'tail -f /tmp/omnibreak_output.log']
-          : ['ssh', '-o', 'StrictHostKeyChecking=no', '-p', String(c.sshPort), `${c.user}@${c.host}`, 'tail -f /tmp/omnibreak_output.log'];
-        const tail = spawn(targs[0], targs.slice(1), { stdio: ['ignore', 'pipe', 'pipe'] });
-        tail.stdout?.on('data', (d: Buffer) => { for (const l of d.toString().split('\n')) if (l.trim()) this.sendEvent(new OutputEvent(l + '\n', 'console')); });
-        this.gdb!.on('exit', () => { try { tail.kill(); } catch {} });
-
+        await this.startGdbserver(c, args, `--attach :${c.port} ${pid}`);
         await this.gdb.sendCommand(`-target-select extended-remote localhost:${c.port}`);
         this.binaryLoaded = true;
         await this.applyPendingBreakpoints();
       }
+
       this.sendResponse(r);
       await wait;
     } catch (err) { this.sendEvent(new OutputEvent(`Attach failed: ${err}\n`, 'stderr')); this.sendErrorResponse(r, 1, `Attach failed: ${err}`); }
@@ -215,12 +208,13 @@ class OmniBreakSession extends DebugSession {
   protected async setBreakPointsRequest(r: DebugProtocol.SetBreakpointsResponse, args: DebugProtocol.SetBreakpointsArguments): Promise<void> {
     if (!this.gdb) { this.sendResponse(r); return; }
     if (!this.binaryLoaded) { this.pendingBreakpoints.push(args); r.body = { breakpoints: (args.breakpoints || []).map(bp => ({ verified: false, line: bp.line })) }; this.sendResponse(r); return; }
+    await this.gdb!.sendCommand('-gdb-set breakpoint pending on').catch(() => {});
     const bps: DebugProtocol.Breakpoint[] = [];
     for (const bp of args.breakpoints || []) {
       try {
         const lp = args.source.path || ''; const gp = lp ? this.sourceMapper.localToCompile(lp) : lp;
-        const loc = gp ? `-f ${gp}:${bp.line}` : `${args.source.name}:${bp.line}`;
-        const result = await this.gdb.sendCommand(bp.condition ? `-break-insert ${loc} -c "${bp.condition}"` : `-break-insert ${loc}`);
+        const loc = gp ? `${gp}:${bp.line}` : `${args.source.name}:${bp.line}`;
+        const result = await this.gdb.sendCommand(bp.condition ? `-break-insert -f ${loc} -c "${bp.condition}"` : `-break-insert -f ${loc}`);
         const info = parseBreakpoint(result.data);
         bps.push({ id: parseInt(info.number || '0', 10), verified: true, line: parseInt(info.line || String(bp.line), 10) });
       } catch (err) { bps.push({ verified: false, line: bp.line, message: String(err) }); }
@@ -260,23 +254,22 @@ class OmniBreakSession extends DebugSession {
   }
   protected async evaluateRequest(r: DebugProtocol.EvaluateResponse, args: DebugProtocol.EvaluateArguments): Promise<void> {
     if (!this.gdb) { this.sendResponse(r); return; }
-    const expr = args.expression;
     try {
-      if (expr.startsWith('!')) {
-        // GDB CLI command: !bt, !info threads, !p var, etc.
-        const cmd = expr.substring(1).trim();
-        const result = await this.gdb.sendCommand(`-interpreter-exec console "${cmd}"`);
-        // Extract console output
-        const m = result.data.match(/^done/);
-        r.body = { result: m ? `GDB: ${cmd} executed. See Debug Console for output.` : result.data, variablesReference: 0 };
+      if (args.expression.startsWith('!')) {
+        const cmd = args.expression.slice(1).trim().replace(/"/g, '\\"');
+        await this.gdb.sendCommand(`-interpreter-exec console "${cmd}"`);
+        r.body = { result: 'ok', variablesReference: 0 };
       } else {
-        const result = await this.gdb.sendCommand(`-data-evaluate-expression "${expr}"`);
+        const result = await this.gdb.sendCommand(`-data-evaluate-expression "${args.expression}"`);
         const m = result.data.match(/done,value="([^"]*)"/);
         r.body = { result: m ? m[1] : result.data, variablesReference: 0 };
       }
     } catch (err) { r.body = { result: `Error: ${err}`, variablesReference: 0 }; }
     this.sendResponse(r);
   }
-  protected async disconnectRequest(r: DebugProtocol.DisconnectResponse): Promise<void> { if(this.gdb){await this.gdb.terminate();this.gdb=null;} this.sendResponse(r); }
+  protected async disconnectRequest(r: DebugProtocol.DisconnectResponse): Promise<void> {
+    if (this.gdb) { await this.gdb.sendCommand('-gdb-exit').catch(()=>{}); await this.gdb.terminate(); this.gdb = null; }
+    this.sendResponse(r);
+  }
 }
 OmniBreakSession.run(OmniBreakSession);

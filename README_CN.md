@@ -158,9 +158,13 @@ ssh root@192.168.1.100 'apt install -y gdbserver gdb-multiarch'
   "sshUser": "root",
   "processName": "myapp",
   "binaryPath": "/opt/app/myapp",
+  "deploySource": "/home/builder/build/myapp",
+  "autoDeploy": true,
   "sourceFileMap": { "/home/builder/project": "${workspaceFolder}" }
 }
 ```
+
+> Attach 模式也支持 `autoDeploy`——attach 前自动 SCP 部署二进制到目标机。
 
 ### 模式 4：调试共享库 (.so)
 
@@ -176,6 +180,15 @@ ssh root@192.168.1.100 'apt install -y gdbserver gdb-multiarch'
   "sourceFileMap": { "/home/builder/project": "${workspaceFolder}" }
 }
 ```
+
+## 调试共享库 (.so)
+
+1. 用 `-g` 编译 `.so`，保留调试符号
+2. 将 `.so` 部署到目标机
+3. 加载 `.so` 的宿主程序由 gdbserver 或 launcher 启动
+4. 在 `launch.json` 中配置 `binaryPath` 指向 `.so` 文件或宿主程序
+5. 在 `.so` 源码中打断点——OmniBreak 自动开启 `set breakpoint pending on`，库加载后断点自动生效
+6. 可选设置 `solibSearchPath`，帮助 GDB 找到共享库
 
 ## 配合进程管理器（systemd/supervisor）
 
@@ -242,6 +255,8 @@ Debug Console 显示：
 | `processName` | 否 | — | 要 attach 的进程名（attach 模式） |
 | `pid` | 否 | — | 要 attach 的 PID（attach 模式） |
 | `solibSearchPath` | 否 | — | 远程 .so 搜索路径 |
+| `useSudo` | 否 | false | gdbserver 命令加 `sudo`（SSH 用户非 root 时） |
+| `skipGdbserverStart` | 否 | false | 跳过 gdbserver 启动（当 launcher 已启动时） |
 
 ## 调试快捷键
 
@@ -269,11 +284,19 @@ Debug Console 显示：
 
 ### SSH 密码弹窗阻止启动
 
-用 SSH 密钥认证（`ssh-copy-id`），或在 launch.json 里加 `"sshPassword"`（编译机需要装 `sshpass`）。
+用 SSH 密钥认证（`ssh-copy-id`），或在 launch.json 里加 `"sshPassword"`。配置密码后，所有连接（scp、gdbserver、GDB）都通过 `sshpass` ——编译机需要装 `sshpass`。
 
 ### 断点不命中
 
-二进制必须带调试符号（编译时加 `-g`）。二进制和源码必须一致——改源码后要重新编译。
+二进制必须带调试符号（编译时加 `-g`）。二进制和源码必须一致——改源码后要重新编译。调试共享库（`.so`）时，确保 `sourceFileMap` 中的编译路径与编译时的完整路径一致（例如 `/tmp/src/libdemo.c` 而非 `/tmp/libdemo.c`）。
+
+### Attach 提示 "Operation not permitted"
+
+Linux ptrace 安全限制，在目标机上执行：
+
+```bash
+sudo sysctl -w kernel.yama.ptrace_scope=0
+```
 
 ### 程序输出不在 Debug Console 显示
 

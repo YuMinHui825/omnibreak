@@ -156,9 +156,13 @@ Auto SCP your compiled binary to target, then debug.
   "sshUser": "root",
   "processName": "myapp",
   "binaryPath": "/opt/app/myapp",
+  "deploySource": "/home/builder/build/myapp",
+  "autoDeploy": true,
   "sourceFileMap": { "/home/builder/project": "${workspaceFolder}" }
 }
 ```
+
+> Attach mode also supports `autoDeploy` — binary is SCP'd to target before attaching.
 
 ### Mode 4: Debug a Shared Library (.so)
 
@@ -196,6 +200,8 @@ Auto SCP your compiled binary to target, then debug.
 | `processName` | No | — | Process to attach to (attach mode) |
 | `pid` | No | — | PID to attach to (attach mode) |
 | `solibSearchPath` | No | — | Remote .so search path |
+| `useSudo` | No | false | Use `sudo` for gdbserver on target (for non-root SSH users) |
+| `skipGdbserverStart` | No | false | Skip gdbserver start (when launcher already runs it) |
 
 ## Debug Controls
 
@@ -257,8 +263,8 @@ Type `!` followed by any GDB command in the Debug Console input:
 1. Compile your `.so` with `-g` (debug symbols)
 2. Deploy the `.so` to the target machine
 3. The host program that loads your `.so` is started by gdbserver (or launcher)
-4. Configure `launch.json` with `binaryPath` pointing to your `.so` file
-5. Set breakpoints in your `.so` source code — they work once the library is loaded
+4. Configure `launch.json` with `binaryPath` pointing to your `.so` file or host executable
+5. Set breakpoints in your `.so` source code — OmniBreak automatically enables `set breakpoint pending on`, so breakpoints activate when the library loads
 6. Optionally set `solibSearchPath` to help GDB find shared libraries
 
 Example:
@@ -292,11 +298,19 @@ Ensure `gdbserver` and `gdb-multiarch` are installed on the target, and the targ
 
 ### SSH password prompt blocks launch
 
-Use SSH key auth (`ssh-copy-id`) or add `"sshPassword"` to the launch config (requires `sshpass` on the build machine).
+Use SSH key auth (`ssh-copy-id`) or add `"sshPassword"` to the launch config. With `sshPassword`, all connections (scp, gdbserver, GDB) use `sshpass` — requires `sshpass` on the build machine.
 
 ### Breakpoints not hitting
 
-The binary must be compiled with debug symbols (`-g` flag). Binary and source must match — recompile after any source changes.
+The binary must be compiled with debug symbols (`-g` flag). Binary and source must match — recompile after any source changes. For shared libraries (`.so`), ensure the compile-path in `sourceFileMap` matches the exact path used during compilation (including subdirectories, e.g. `/tmp/src/libdemo.c` not `/tmp/libdemo.c`).
+
+### Attach shows "Operation not permitted"
+
+Linux ptrace security restriction. On the target machine:
+
+```bash
+sudo sysctl -w kernel.yama.ptrace_scope=0
+```
 
 ### Program output not showing in Debug Console
 

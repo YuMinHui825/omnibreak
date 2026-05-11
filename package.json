@@ -65,7 +65,7 @@
               },
               "sshPassword": {
                 "type": "string",
-                "description": "SSH password (optional, prefer key auth)"
+                "description": "SSH password for both SCP and GDB connection (uses sshpass)"
               },
               "gdbPath": {
                 "type": "string",
@@ -110,6 +110,11 @@
                 "type": "boolean",
                 "default": false,
                 "description": "Skip gdbserver start (when launcher already runs it)"
+              },
+              "useSudo": {
+                "type": "boolean",
+                "default": false,
+                "description": "Use sudo for gdbserver commands on target"
               }
             }
           },
@@ -137,7 +142,7 @@
               },
               "sshPassword": {
                 "type": "string",
-                "description": "SSH password (optional)"
+                "description": "SSH password for both SCP and GDB connection (uses sshpass)"
               },
               "processName": {
                 "type": "string",
@@ -181,6 +186,11 @@
                 "type": "boolean",
                 "default": false,
                 "description": "Auto SCP deploySource to binaryPath before debug"
+              },
+              "useSudo": {
+                "type": "boolean",
+                "default": false,
+                "description": "Use sudo for gdbserver commands on target"
               }
             }
           }

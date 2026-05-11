@@ -9,11 +9,11 @@
       "targetPort": 2345,
       "sshUser": "ubuntu",
       "sshPort": 22,
-      "binaryPath": "/tmp/host",
+      "binaryPath": "/tmp/build/host",
       "gdbPath": "/usr/bin/gdb-multiarch",
       "nonStopMode": false,
       "sourceFileMap": {
-        "/tmp": "/Users/yuminhui/olall/code/omnibreak/example/src"
+        "/tmp": "${workspaceFolder}"
       }
     },
     {
@@ -42,11 +42,11 @@
       "targetPort": 2345,
       "sshUser": "ubuntu",
       "sshPort": 22,
-      "binaryPath": "/tmp/host",
+      "binaryPath": "/tmp/build/host",
       "gdbPath": "/usr/bin/gdb-multiarch",
       "nonStopMode": false,
       "sourceFileMap": {
-        "/tmp": "/Users/yuminhui/olall/code/omnibreak/example/src"
+        "/tmp": "${workspaceFolder}"
       },
       "skipGdbserverStart": true
     }

@@ -17,6 +17,7 @@ export interface OmniBreakConfig extends DebugProtocol.LaunchRequestArguments {
   processName?: string;
   pid?: number;
   solibSearchPath?: string;
+  useSudo?: boolean;
   skipGdbserverStart?: boolean;
   // Legacy
   localBinaryPath?: string;
