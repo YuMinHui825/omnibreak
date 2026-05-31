@@ -75,9 +75,14 @@ hr{border:none;border-top:1px solid var(--bd);margin:10px 0}
 [title]{position:relative}[title]:hover::after{content:attr(title);position:fixed;background:var(--in);color:var(--fg);border:1px solid var(--bd);border-radius:5px;padding:5px 10px;font-size:11px;white-space:nowrap;z-index:9999;pointer-events:none;left:var(--mx,0);top:var(--my,0);transform:translate(10px,-100%)}
 </style></head><body>
 <div id="tabs" class="tabs"><button class="tab on" data-t="config">Config</button><button class="tab" data-t="stats">Stats</button><button class="tab" data-t="leaks">Leaks</button><button class="tab" data-t="logs">Logs</button></div>
+<div id="diag" style="padding:4px 8px;font-size:10px;color:#e5534b;display:none"></div>
 <div id="root" class="content">Loading...</div>
 <script>
-var v=acquireVsCodeApi(),saved=v.getState()||{};var devices=[],sessions=[],logs=saved.logs||[],tab='config',sel=saved.sel||'',ed=null,sf=false,conn=saved.conn||'',logView='actions',busy=false;
+(function(){
+var diag=document.getElementById('diag');
+function die(m){diag.textContent='Failed to load OmniBreak panel: '+m;diag.style.display='block';console.warn(m)}
+try{var v=acquireVsCodeApi(),saved=v.getState()||{};}catch(e){die('acquireVsCodeApi: '+e.message);return}
+var devices=[],sessions=[],logs=saved.logs||[],tab='config',sel=saved.sel||'',ed=null,sf=false,conn=saved.conn||'',logView='actions',busy=false;
 var deploy=[],targets=[],rlogs=saved.rlogs||[];if(saved.deploy&&saved.deploy.length)deploy=saved.deploy;if(saved.targets&&saved.targets.length)targets=saved.targets;
 var fs={n:'',h:'',u:'root',p:'22',pw:'',sp:'',g:'/usr/bin/gdb-multiarch'};
 
@@ -133,5 +138,6 @@ function RL(r){
 
 document.addEventListener('mousemove',function(e){document.documentElement.style.setProperty('--mx',e.clientX+'px');document.documentElement.style.setProperty('--my',e.clientY+'px')});
 document.querySelectorAll('.tab').forEach(function(t){t.onclick=function(){tab=t.dataset.t;document.querySelectorAll('.tab').forEach(function(x){x.className='tab'+(x===t?' on':'')});R()}});
-R();v.postMessage({type:'load-devices'});
+try{R();v.postMessage({type:'load-devices'});}catch(e){die('init: '+e.message)}
+})();
 </script></body></html>`;}

@@ -3,8 +3,15 @@
 src/**
 tsconfig.json
 node_modules/**
-!node_modules/@vscode/debugadapter/**
-!node_modules/@vscode/debugprotocol/**
+!node_modules/@vscode/**
+!node_modules/ssh2/**
+!node_modules/asn1/**
+!node_modules/safer-buffer/**
+!node_modules/bcrypt-pbkdf/**
+!node_modules/tweetnacl/**
+!node_modules/cpu-features/**
+!node_modules/nan/**
+!node_modules/buildcheck/**
 example/**
 scripts/**
 docs/**

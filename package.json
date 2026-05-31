@@ -36,7 +36,7 @@
         {
           "id": "omnibreak",
           "title": "OmniBreak",
-          "icon": "$(debug-alt)"
+          "icon": "resources/omnibreak.svg"
         }
       ]
     },
@@ -280,5 +280,5 @@
     "ssh2": "^1.17.0"
   },
   "author": "shibu",
-  "icon": "icon.png"
+  "icon": "resources/omnibreak.png"
 }

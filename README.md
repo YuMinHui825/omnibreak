@@ -1,4 +1,4 @@
-<p align="center"><img src="icon.png" width="128" alt="OmniBreak" /></p>
+<p align="center"><img src="resources/omnibreak.png" width="128" alt="OmniBreak" /></p>
 
 # OmniBreak
 
