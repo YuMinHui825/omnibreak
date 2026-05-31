@@ -1,4 +1,4 @@
-import { DebugSession, InitializedEvent, TerminatedEvent, StoppedEvent, ContinuedEvent, OutputEvent, Thread, StackFrame, Scope, Source, Handles } from '@vscode/debugadapter';
+import { DebugSession, InitializedEvent, TerminatedEvent, StoppedEvent, ContinuedEvent, OutputEvent, BreakpointEvent, Thread, StackFrame, Scope, Source, Handles } from '@vscode/debugadapter';
 import { DebugProtocol } from '@vscode/debugprotocol';
 import { GdbMiClient, GdbLaunchOptions } from './gdbMiClient';
 import { parseBreakpoint, parseThreadInfo, parseFrames, parseVariables } from './gdbMiParser';
@@ -41,7 +41,8 @@ class OmniBreakSession extends DebugSession {
     if (!this.gdb) return;
     this.gdb.on('stopped', (d) => {
       if (d.includes('exited-normally') || d.includes('exited-signalled')) return;
-      let reason: 'breakpoint' | 'step' | 'pause' | 'exception' = 'pause';
+      if (this.firstStop) { this.gdb!.sendCommand(`-interpreter-exec console "call setbuf(stdout,0)"`).catch(() => {}); }
+            let reason: 'breakpoint' | 'step' | 'pause' | 'exception' = 'pause';
       const m = d.match(/thread-id="(\d+)"/);
       if (d.includes('breakpoint-hit')) reason = 'breakpoint';
       else if (d.includes('end-stepping-range')) reason = 'step';
@@ -64,7 +65,7 @@ class OmniBreakSession extends DebugSession {
       const m = d.match(/thread-id="(\d+)"/);
       this.sendEvent(new ContinuedEvent(m ? parseInt(m[1], 10) : 0, true));
     });
-    this.gdb.on('output', (cat, text) => this.sendEvent(new OutputEvent(text, cat)));
+    this.gdb.on('output', (cat, text) => this.sendEvent(new OutputEvent(text, cat === 'target' ? 'stdout' : cat === 'log' ? 'stderr' : 'console')));
     this.gdb.on('exit', () => this.sendEvent(new TerminatedEvent()));
   }
 
@@ -80,15 +81,26 @@ class OmniBreakSession extends DebugSession {
 
   private async applyPendingBreakpoints(): Promise<void> {
     await this.gdb!.sendCommand('-gdb-set breakpoint pending on').catch(() => {});
-    for (const args of this.pendingBreakpoints)
+    const verified: DebugProtocol.Breakpoint[] = [];
+    for (const args of this.pendingBreakpoints) {
+      let src: DebugProtocol.Source | undefined;
+      if (args.source.path) src = new Source(args.source.name || args.source.path.split('/').pop()!, args.source.path);
       for (const bp of args.breakpoints || []) {
         const lp = args.source.path || ''; const gp = lp ? this.sourceMapper.localToCompile(lp) : lp;
         try {
           const result = await this.gdb!.sendCommand(bp.condition ? `-break-insert -f ${gp}:${bp.line} -c "${bp.condition}"` : `-break-insert -f ${gp}:${bp.line}`);
+          const info = parseBreakpoint(result.data);
+          const bpid = parseInt(info.number || '0', 10);
+          verified.push({ id: bpid, verified: true, source: src, line: bp.line, column: bp.column } as DebugProtocol.Breakpoint);
           this.sendEvent(new OutputEvent(`Breakpoint: ${gp}:${bp.line} -> ${result.data}\n`, 'console'));
-        } catch (e: any) { this.sendEvent(new OutputEvent(`Breakpoint FAIL: ${gp}:${bp.line} -> ${e.message}\n`, 'stderr')); }
+        } catch (e: any) {
+          verified.push({ verified: false, source: src, line: bp.line, message: String(e) });
+          this.sendEvent(new OutputEvent(`Breakpoint FAIL: ${gp}:${bp.line} -> ${e.message}\n`, 'stderr'));
+        }
       }
+    }
     this.pendingBreakpoints = [];
+    for (const b of verified) this.sendEvent(new BreakpointEvent('changed', b));
   }
 
   // Deploy helper — used by both launch and attach
@@ -116,6 +128,7 @@ class OmniBreakSession extends DebugSession {
       ? ['sshpass', '-p', c.pwd, 'ssh', '-o', 'StrictHostKeyChecking=no', '-p', String(c.sshPort), `${c.user}@${c.host}`, 'tail -f /tmp/omnibreak_output.log']
       : ['ssh', '-o', 'StrictHostKeyChecking=no', '-p', String(c.sshPort), `${c.user}@${c.host}`, 'tail -f /tmp/omnibreak_output.log'];
     const tail = spawn(targs[0], targs.slice(1), { stdio: ['ignore', 'pipe', 'pipe'] });
+    tail.on('error', () => {});
     tail.stdout?.on('data', (d: Buffer) => { for (const l of d.toString().split('\n')) if (l.trim()) this.sendEvent(new OutputEvent(l + '\n', 'console')); });
     this.gdb!.on('exit', () => { try { tail.kill(); } catch {} });
   }
@@ -141,7 +154,7 @@ class OmniBreakSession extends DebugSession {
 
       if (useSsh) {
         this.doDeploy(c, args);
-        await this.startGdbserver(c, args, `--multi :${c.port}`);
+        if (!args.skipGdbserverStart) await this.startGdbserver(c, args, `--multi :${c.port}`);
         await this.gdb.sendCommand(`-target-select extended-remote localhost:${c.port}`);
         if (c.bin) { await this.gdb.sendCommand(`-file-exec-and-symbols ${c.bin}`); await this.gdb.sendCommand(`-interpreter-exec console "set remote exec-file ${c.rbin}"`); }
         this.binaryLoaded = true;
@@ -207,8 +220,8 @@ class OmniBreakSession extends DebugSession {
   // ═══ DAP HANDLERS ═══
   protected async setBreakPointsRequest(r: DebugProtocol.SetBreakpointsResponse, args: DebugProtocol.SetBreakpointsArguments): Promise<void> {
     if (!this.gdb) { this.sendResponse(r); return; }
-    if (!this.binaryLoaded) { this.pendingBreakpoints.push(args); r.body = { breakpoints: (args.breakpoints || []).map(bp => ({ verified: false, line: bp.line })) }; this.sendResponse(r); return; }
-    await this.gdb!.sendCommand('-gdb-set breakpoint pending on').catch(() => {});
+    if (!this.binaryLoaded) { this.pendingBreakpoints.push(args); r.body = { breakpoints: (args.breakpoints || []).map(bp => ({ verified: true, line: bp.line, column: bp.column, source: args.source } as DebugProtocol.Breakpoint)) }; this.sendResponse(r); return; }
+    await this.gdb!.sendCommand('-break-delete').catch(() => {});
     const bps: DebugProtocol.Breakpoint[] = [];
     for (const bp of args.breakpoints || []) {
       try {
@@ -270,6 +283,14 @@ class OmniBreakSession extends DebugSession {
   protected async disconnectRequest(r: DebugProtocol.DisconnectResponse): Promise<void> {
     if (this.gdb) { await this.gdb.sendCommand('-gdb-exit').catch(()=>{}); await this.gdb.terminate(); this.gdb = null; }
     this.sendResponse(r);
+  }
+  protected async customRequest(command: string, r: DebugProtocol.Response, args: any): Promise<void> {
+    switch(command) {
+      case 'omnibreak.stackTrace': return this.stackTraceRequest(r as DebugProtocol.StackTraceResponse, args);
+      case 'omnibreak.variables': return this.variablesRequest(r as DebugProtocol.VariablesResponse, args);
+      case 'omnibreak.threads': return this.threadsRequest(r as DebugProtocol.ThreadsResponse);
+      default: this.sendResponse(r);
+    }
   }
 }
 OmniBreakSession.run(OmniBreakSession);

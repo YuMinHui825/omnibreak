@@ -3,59 +3,51 @@
 # OmniBreak
 
 > Visual remote debugging for Linux — break anywhere, any thread, any process.  
-> Like Xcode for ARM64/x86 Linux.
+> Like Xcode for ARM64/x86 Linux. No launch.json, no remote agents. Just SSH.
 
 ## What is OmniBreak?
 
-OmniBreak is a VSCode extension that gives you visual breakpoint debugging for remote Linux targets. You write code on a build machine, the binary runs on a target machine (robot, embedded device, cloud server), and you debug seamlessly in VSCode — full breakpoints, variable inspection, call stacks, thread control.
+OmniBreak is a VSCode extension that gives you visual breakpoint debugging for remote Linux targets. You write code on your machine, the binary runs on a remote Linux box (robot, embedded device, cloud server), and you debug seamlessly in VSCode — full breakpoints, variable inspection, call stacks, thread control.
+
+**No launch.json needed.** Everything is configured through a visual sidebar panel.
 
 ## How it works
 
 ```
-Build Machine                  Target Machine
-(VSCode + source + binary)     (binary runs here)
-│                              │
-│  ① scp binary ────────────→  │  (auto, if deploy enabled)
-│  ② ssh start gdbserver ───→  │
-│  ③ ssh start GDB ─────────→  │  ← GDB talks to gdbserver
-│                              │
-└─ VSCode UI: breakpoints, step, variables
+Your Mac / PC                    Remote Linux Target
+(VSCode + OmniBreak)             (binary runs here)
+│                                │
+│  Sidebar UI: add device ───────→ SSH connect + heartbeat
+│  Config targets + deploy ──────→ SCP files, start commands
+│  Click "Debug" ───────────────→ gdbserver --multi per process
+│  VSCode Debug view ───────────→ GDB ↔ gdbserver ↔ binary
+│                                │
+└─ printf output ────────────────→ Remote logs tail in sidebar
 ```
 
-All debugging commands run through GDB on the target. No GDB needed on your local machine — just VSCode Remote-SSH to the build machine.
+All debugging runs through GDB on the target. No GDB needed locally. Zero external dependencies — pure Node.js `ssh2` library.
 
 ## Prerequisites
 
-### Your Machine (where VSCode runs)
-
-- **VSCode 1.90+** — macOS, Linux, or Windows
-- **Remote-SSH extension** ([marketplace](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-ssh))
-- **Node.js 20+** — only if building the `.vsix` from source; not needed to use the extension
-
-### Build Machine (where source code + compile + deploy happen)
-
-- Linux with SSH server
-- Standard build toolchain (gcc/cmake/conan/etc) — whatever you already use
-- `scp` and `ssh` available (pre-installed on any Linux)
-- `sshpass` (optional, only if using SSH password instead of key)
-
-### Target Machine (where the binary runs)
+### Remote Target
 
 ```bash
 sudo apt install -y gdbserver gdb-multiarch
 ```
 
-That's it. Both packages are in standard Ubuntu/Debian repos.  
-`stdbuf` (part of coreutils, pre-installed) is used by OmniBreak to flush program output in real-time.
+That's it. Both packages are in standard Ubuntu/Debian repos.
 
-> Typically the build machine and target machine are different. The build machine cross-compiles; the target machine runs the program. OmniBreak copies the binary from build → target, then debugs on the target.
+### Your Machine (where VSCode runs)
+
+- **VSCode 1.90+** — macOS, Linux, or Windows
+- **Node.js 20+** — only if building from source
 
 ## Install
 
 ### Download & Install
 
 ```bash
-code --install-extension omnibreak-0.1.0.vsix
+code --install-extension omnibreak-0.2.0.vsix
 ```
 
 ### Build from Source
@@ -65,256 +57,76 @@ git clone https://github.com/YuMinHui825/omnibreak.git
 cd omnibreak
 npm install
 npm run compile
-npm run package          # generates omnibreak-0.1.0.vsix
-code --install-extension omnibreak-0.1.0.vsix
+npm run package
+code --install-extension omnibreak-0.2.0.vsix
 ```
 
 ## Quick Start
 
-### 1. SSH to target
+### 1. Open OmniBreak sidebar
 
-```bash
-ssh-copy-id root@192.168.1.100   # set up key auth (recommended)
-ssh root@192.168.1.100 'apt install -y gdbserver gdb-multiarch'
-```
+Click the OmniBreak icon in the VSCode activity bar.
 
-### 2. Add launch.json
+### 2. Add a device
 
-Create `.vscode/launch.json` in your project:
+Click **+ Add Device**, fill in the remote target's IP, SSH user, and password. Credentials are stored encrypted in VSCode SecretStorage (macOS Keychain / system keyring).
 
-```json
-{
-  "version": "0.2.0",
-  "configurations": [
-    {
-      "type": "omnibreak",
-      "request": "launch",
-      "name": "OmniBreak: Remote Debug",
-      "targetHost": "192.168.1.100",
-      "targetPort": 2345,
-      "sshUser": "root",
-      "sshPort": 22,
-      "binaryPath": "/opt/app/myapp",
-      "gdbPath": "/usr/bin/gdb-multiarch",
-      "nonStopMode": true,
-      "sourceFileMap": {
-        "/home/builder/project": "${workspaceFolder}"
-      }
-    }
-  ]
-}
-```
+### 3. Configure debug targets
 
-### 3. Press F5
+Select a device, then add **Debug targets** — one per process you want to debug. Fill in:
+- **Process name** — e.g. `host`
+- **Binary path** — e.g. `/tmp/example/build/host`
+- **Start command** — e.g. `/tmp/example/build/host` (automatically started before attach)
+- **Env vars** — `KEY=VALUE` per line (optional)
 
-That's it. OmniBreak handles the rest — SSH to target, start gdbserver, connect GDB, and you're debugging.
+Optionally configure **Deploy files** to SCP local binaries to the target before debugging, and **Remote logs** to tail log files in real-time.
 
-## Configuration Modes
+### 4. Click Connect, then Debug
 
-### Mode 1: Remote Debug
+Click **Connect** to test the SSH connection. Once connected, click **Debug**. OmniBreak handles the rest — SSH to target, start gdbserver (one per process), launch VSCode debug sessions, and you're debugging.
 
-Binary is already on the target. Press F5.
+## Sidebar Tabs
 
-```json
-{
-  "type": "omnibreak",
-  "request": "launch",
-  "name": "Remote Debug",
-  "targetHost": "192.168.1.100",
-  "sshUser": "root",
-  "binaryPath": "/opt/app/myapp",
-  "sourceFileMap": { "/home/builder/project": "${workspaceFolder}" }
-}
-```
+| Tab | Description |
+|-----|-------------|
+| **Config** | Device management, deploy files, debug targets, remote log paths |
+| **Stats** | CPU / Memory / GPU monitoring (Phase 2) |
+| **Leaks** | Memory leak detection (Phase 3) |
+| **Logs** | Real-time log viewer with sub-pages per remote log file |
 
-### Mode 2: Deploy & Debug
+## Features
 
-Auto SCP your compiled binary to target, then debug.
-
-```json
-{
-  "type": "omnibreak",
-  "request": "launch",
-  "name": "Deploy & Debug",
-  "targetHost": "192.168.1.100",
-  "sshUser": "root",
-  "deploySource": "/home/builder/build/myapp",
-  "binaryPath": "/opt/app/myapp",
-  "autoDeploy": true,
-  "sourceFileMap": { "/home/builder/project": "${workspaceFolder}" }
-}
-```
-
-### Mode 3: Attach to Running Process
-
-```json
-{
-  "type": "omnibreak",
-  "request": "attach",
-  "name": "Attach",
-  "targetHost": "192.168.1.100",
-  "sshUser": "root",
-  "processName": "myapp",
-  "binaryPath": "/opt/app/myapp",
-  "deploySource": "/home/builder/build/myapp",
-  "autoDeploy": true,
-  "sourceFileMap": { "/home/builder/project": "${workspaceFolder}" }
-}
-```
-
-> Attach mode also supports `autoDeploy` — binary is SCP'd to target before attaching.
-
-### Mode 4: Debug a Shared Library (.so)
-
-```json
-{
-  "type": "omnibreak",
-  "request": "attach",
-  "name": "Debug .so",
-  "targetHost": "192.168.1.100",
-  "sshUser": "root",
-  "processName": "host-app",
-  "binaryPath": "/opt/app/libmylib.so",
-  "solibSearchPath": "/opt/app/libs",
-  "sourceFileMap": { "/home/builder/project": "${workspaceFolder}" }
-}
-```
-
-## All Fields
-
-| Field | Required | Default | Description |
-|-------|:---:|------|------|
-| `targetHost` | Yes | — | Target Linux IP or hostname |
-| `sshUser` | Yes | — | SSH username for target |
-| `binaryPath` | Yes | — | Path to binary on target machine |
-| `targetPort` | No | 2345 | gdbserver port on target |
-| `sshPort` | No | 22 | SSH port on target |
-| `sshPassword` | No | — | SSH password (omit to use key auth) |
-| `symbolFile` | No | binaryPath | Separate debug symbol file |
-| `gdbPath` | No | /usr/bin/gdb-multiarch | GDB path on target |
-| `sourceFileMap` | No | — | Compile-time path → local workspace |
-| `nonStopMode` | No | true | Multi-thread non-stop debugging |
-| `deploySource` | No | — | Local binary path (for auto-deploy) |
-| `autoDeploy` | No | false | SCP before debug |
-| `remoteLogPath` | No | — | Tail a remote log file in Debug Console |
-| `processName` | No | — | Process to attach to (attach mode) |
-| `pid` | No | — | PID to attach to (attach mode) |
-| `solibSearchPath` | No | — | Remote .so search path |
-| `useSudo` | No | false | Use `sudo` for gdbserver on target (for non-root SSH users) |
-| `skipGdbserverStart` | No | false | Skip gdbserver start (when launcher already runs it) |
-
-## Debug Controls
-
-| Action | Key |
-|------|------|
-| Continue | F5 |
-| Step Over | F10 |
-| Step Into | F11 |
-| Step Out | Shift+F11 |
-| Stop | Shift+F5 |
-
-## Using with a Process Launcher (systemd/supervisor)
-
-If your program is started by a launcher (systemd, supervisor, custom script), change the launch command to wrap your binary with `gdbserver`:
-
-```bash
-# Before:
-ExecStart=/opt/app/myapp
-
-# After:
-ExecStart=gdbserver :2345 /opt/app/myapp
-```
-
-OmniBreak automatically detects that gdbserver is already running on the target and connects directly — no restart needed. When the program crashes, OmniBreak catches the signal, displays a full backtrace, and keeps the session alive for inspection.
-
-## Crash Debugging
-
-When a SIGSEGV, SIGABRT, or any fatal signal hits, OmniBreak:
-
-1. **Stops at the crash line** — source highlighted at the exact crash location
-2. **Prints full backtrace** — all stack frames from crash point to entry
-3. **Keeps session alive** — inspect variables, registers, and call stack without the session closing
-
-The Debug Console shows:
-
-```
-=== CRASH BACKTRACE ===
-#0 compute at libdemo.c:9
-#1 main at host.c:8
-#2 __libc_start_main at libc-start.c:308
-#3 _start at start.S:122
-```
-
-## GDB Commands via Debug Console
-
-Type `!` followed by any GDB command in the Debug Console input:
-
-```
-!bt full          # Full backtrace with local variables
-!info threads     # List all threads
-!info registers   # Dump CPU registers
-!p variable_name  # Print a variable
-!x/10x $sp        # Examine 10 words at stack pointer
-!disassemble      # Show assembly at current PC
-```
-
-## Debugging a Shared Library (.so)
-
-1. Compile your `.so` with `-g` (debug symbols)
-2. Deploy the `.so` to the target machine
-3. The host program that loads your `.so` is started by gdbserver (or launcher)
-4. Configure `launch.json` with `binaryPath` pointing to your `.so` file or host executable
-5. Set breakpoints in your `.so` source code — OmniBreak automatically enables `set breakpoint pending on`, so breakpoints activate when the library loads
-6. Optionally set `solibSearchPath` to help GDB find shared libraries
-
-Example:
-
-```json
-{
-  "type": "omnibreak",
-  "request": "launch",
-  "name": "Debug my .so",
-  "targetHost": "192.168.1.100",
-  "sshUser": "root",
-  "binaryPath": "/opt/app/libmylib.so",
-  "solibSearchPath": "/opt/app/libs",
-  "sourceFileMap": { "/home/builder/project": "${workspaceFolder}" }
-}
-```
+- **Multi-process debugging** — debug N processes simultaneously, each with independent breakpoints and DAP sessions
+- **One-click restart + attach** — configure a start command and OmniBreak restarts your service then attaches automatically
+- **Deploy pipeline** — SCP local binaries to the target before debugging, with chmod support
+- **Remote log tailing** — add remote log file paths, tailed in real-time in the Logs tab
+- **Connection heartbeat** — monitors SSH connection every 5 seconds, detects disconnects instantly
+- **Encrypted credentials** — SSH and sudo passwords stored in VSCode SecretStorage
+- **Crash debugging** — SIGSEGV/SIGABRT trigger automatic backtrace display, session stays alive
+- **GDB commands** — type `!` in Debug Console to run any GDB command (`!bt full`, `!info threads`, etc.)
+- **SSH key or password auth** — both supported, configured per device
 
 ## Troubleshooting
 
-### "No symbol table loaded" when setting breakpoints
-
-Set breakpoints in the source file that matches your compiled binary. The `sourceFileMap` must map the compile-time source path to your VSCode workspace path. Example: if GCC compiled from `/home/builder/project/main.c`, and VSCode opens `${workspaceFolder}/main.c`, then:
-
-```json
-"sourceFileMap": { "/home/builder/project": "${workspaceFolder}" }
-```
-
 ### "Connection timed out" / gdbserver not found
 
-Ensure `gdbserver` and `gdb-multiarch` are installed on the target, and the target's firewall allows the configured port (default 2345).
-
-### SSH password prompt blocks launch
-
-Use SSH key auth (`ssh-copy-id`) or add `"sshPassword"` to the launch config. With `sshPassword`, all connections (scp, gdbserver, GDB) use `sshpass` — requires `sshpass` on the build machine.
+Ensure `gdbserver` and `gdb-multiarch` are installed on the target, and port 2345 is reachable.
 
 ### Breakpoints not hitting
 
-The binary must be compiled with debug symbols (`-g` flag). Binary and source must match — recompile after any source changes. For shared libraries (`.so`), ensure the compile-path in `sourceFileMap` matches the exact path used during compilation (including subdirectories, e.g. `/tmp/src/libdemo.c` not `/tmp/libdemo.c`).
+The binary must be compiled with debug symbols (`-g`). Binary and source must match — recompile after any source changes.
 
 ### Attach shows "Operation not permitted"
 
-Linux ptrace security restriction. On the target machine:
+Linux ptrace security restriction. On the target:
 
 ```bash
 sudo sysctl -w kernel.yama.ptrace_scope=0
 ```
 
-### Program output not showing in Debug Console
+### Program output not showing
 
-Output should appear automatically via `tail -f`. If not, check that `stdbuf` is available on the target (`which stdbuf`).
+Program printf output is written to gdbserver's stdout. Add the log path (e.g. `/tmp/omnibreak-gdb-host.log`) to **Remote logs** in the Config tab, then view it in the Logs tab.
 
 ## License
 

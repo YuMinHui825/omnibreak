@@ -1,0 +1,11 @@
+export const EXT_ID = 'omnibreak';
+export const VIEW_ID = 'omnibreak.sidebar';
+export const WEBVIEW_ID = 'omnibreak.webview';
+export const STORAGE_KEY_DEVICES = 'omnibreak.devices';
+export const STORAGE_PREFIX_SSH_PW = 'omnibreak.ssh-pw.';
+export const STORAGE_PREFIX_SUDO_PW = 'omnibreak.sudo-pw.';
+export const DEFAULT_SSH_PORT = 22;
+export const DEFAULT_GDBSERVER_BASE_PORT = 2345;
+export const MAX_PORT_TRIES = 20;
+export const DEFAULT_TIMEOUT = 30;
+export const DEFAULT_GDB_PATH = '/usr/bin/gdb-multiarch';

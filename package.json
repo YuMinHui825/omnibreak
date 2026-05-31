@@ -1,8 +1,8 @@
 {
   "name": "omnibreak",
   "displayName": "OmniBreak",
-  "description": "Visual remote debugging for Linux \u2014 break anywhere, any thread, any process. Like Xcode for ARM64/x86.",
-  "version": "0.1.0",
+  "description": "Like Xcode for Linux. Point VSCode at any ARM64/x86 machine and debug. Multi-process, one-click restart-and-attach, no remote agents.",
+  "version": "0.2.0-beta",
   "publisher": "shibu",
   "license": "MIT",
   "repository": {
@@ -22,13 +22,33 @@
     "embedded",
     "arm64",
     "linux",
-    "cross-compile"
+    "cross-compile",
+    "multi-process"
   ],
   "activationEvents": [
-    "onDebugResolve:omnibreak"
+    "onDebugResolve:omnibreak",
+    "onView:omnibreak.sidebar"
   ],
   "main": "./out/extension/extension.js",
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "omnibreak",
+          "title": "OmniBreak",
+          "icon": "$(debug-alt)"
+        }
+      ]
+    },
+    "views": {
+      "omnibreak": [
+        {
+          "type": "webview",
+          "id": "omnibreak.sidebar",
+          "name": "Debug Panel"
+        }
+      ]
+    },
     "debuggers": [
       {
         "type": "omnibreak",
@@ -65,56 +85,46 @@
               },
               "sshPassword": {
                 "type": "string",
-                "description": "SSH password for both SCP and GDB connection (uses sshpass)"
+                "description": "SSH password"
+              },
+              "sudoPassword": {
+                "type": "string",
+                "description": "sudo password"
               },
               "gdbPath": {
                 "type": "string",
-                "description": "Path to gdb-multiarch on target",
+                "description": "GDB path",
                 "default": "/usr/bin/gdb-multiarch"
               },
               "sourceFileMap": {
                 "type": "object",
-                "description": "Compile-path \u2192 local-path mapping",
-                "additionalProperties": {
-                  "type": "string"
-                }
+                "description": "Compile-path -> local-path mapping"
               },
               "nonStopMode": {
                 "type": "boolean",
                 "description": "Non-stop multi-thread mode",
                 "default": true
               },
-              "remoteLogPath": {
-                "type": "string",
-                "description": "Remote log file to tail in VSCode"
-              },
               "binaryPath": {
                 "type": "string",
-                "description": "Remote binary to launch",
+                "description": "Remote binary",
                 "default": "${workspaceFolder}/build/my_app"
-              },
-              "symbolFile": {
-                "type": "string",
-                "description": "Separate debug symbol file (defaults to binaryPath)"
               },
               "deploySource": {
                 "type": "string",
-                "description": "Local file path to SCP to target before debug"
+                "description": "Local file to SCP"
               },
               "autoDeploy": {
                 "type": "boolean",
-                "default": false,
-                "description": "Auto SCP deploySource to binaryPath before debug"
-              },
-              "skipGdbserverStart": {
-                "type": "boolean",
-                "default": false,
-                "description": "Skip gdbserver start (when launcher already runs it)"
+                "default": false
               },
               "useSudo": {
                 "type": "boolean",
-                "default": false,
-                "description": "Use sudo for gdbserver commands on target"
+                "default": false
+              },
+              "envVars": {
+                "type": "object",
+                "description": "Environment variables"
               }
             }
           },
@@ -122,75 +132,49 @@
             "properties": {
               "targetHost": {
                 "type": "string",
-                "description": "Target Linux hostname/IP",
                 "default": "192.168.1.100"
               },
               "targetPort": {
                 "type": "integer",
-                "description": "gdbserver port",
                 "default": 2345
               },
               "sshUser": {
                 "type": "string",
-                "description": "SSH user",
                 "default": "root"
               },
               "sshPort": {
                 "type": "integer",
-                "description": "SSH port",
                 "default": 22
               },
               "sshPassword": {
-                "type": "string",
-                "description": "SSH password for both SCP and GDB connection (uses sshpass)"
+                "type": "string"
+              },
+              "sudoPassword": {
+                "type": "string"
               },
               "processName": {
-                "type": "string",
-                "description": "Process name to attach to"
+                "type": "string"
               },
               "pid": {
-                "type": "integer",
-                "description": "Or specific PID to attach to"
+                "type": "integer"
               },
               "gdbPath": {
                 "type": "string",
-                "description": "Path to gdb-multiarch on target",
                 "default": "/usr/bin/gdb-multiarch"
               },
               "sourceFileMap": {
-                "type": "object",
-                "description": "Compile-path \u2192 local-path mapping"
-              },
-              "remoteLogPath": {
-                "type": "string",
-                "description": "Remote log file to tail in VSCode"
-              },
-              "solibSearchPath": {
-                "type": "string",
-                "description": "Remote path to search for .so libraries"
+                "type": "object"
               },
               "binaryPath": {
                 "type": "string",
-                "description": "Remote binary to launch",
                 "default": "${workspaceFolder}/build/my_app"
-              },
-              "symbolFile": {
-                "type": "string",
-                "description": "Separate debug symbol file (defaults to binaryPath)"
-              },
-              "deploySource": {
-                "type": "string",
-                "description": "Local file path to SCP to target before debug"
-              },
-              "autoDeploy": {
-                "type": "boolean",
-                "default": false,
-                "description": "Auto SCP deploySource to binaryPath before debug"
               },
               "useSudo": {
                 "type": "boolean",
-                "default": false,
-                "description": "Use sudo for gdbserver commands on target"
+                "default": false
+              },
+              "envVars": {
+                "type": "object"
               }
             }
           }
@@ -228,9 +212,7 @@
               "sourceFileMap": {
                 "/home/builder/project": "${workspaceFolder}"
               },
-              "binaryPath": "${workspaceFolder}/build/my_app",
-              "deploySource": "${workspaceFolder}/build/my_app",
-              "autoDeploy": false
+              "binaryPath": "${workspaceFolder}/build/my_app"
             }
           },
           {
@@ -260,8 +242,8 @@
         "title": "OmniBreak: Show Output"
       },
       {
-        "command": "omnibreak.tailLog",
-        "title": "OmniBreak: Tail Remote Log"
+        "command": "omnibreak.generateReport",
+        "title": "OmniBreak: Generate Diagnostic Report"
       }
     ],
     "configuration": {
@@ -269,13 +251,11 @@
       "properties": {
         "omnibreak.gdbPath": {
           "type": "string",
-          "default": "/usr/bin/gdb-multiarch",
-          "description": "Default GDB path"
+          "default": "/usr/bin/gdb-multiarch"
         },
         "omnibreak.maxReconnectAttempts": {
           "type": "integer",
-          "default": 5,
-          "description": "Max reconnect attempts on disconnect"
+          "default": 5
         }
       }
     }
@@ -283,19 +263,21 @@
   "scripts": {
     "compile": "tsc",
     "watch": "tsc --watch",
+    "build": "npm run compile",
     "lint": "eslint src --ext .ts",
-    "package": "vsce package",
-    "validate": "bash scripts/validate-phase0.sh"
+    "package": "npm run build && vsce package --no-dependencies"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
+    "@types/ssh2": "^1.15.5",
     "@types/vscode": "^1.90.0",
-    "typescript": "^5.4.0",
-    "@vscode/vsce": "^2.30.0"
+    "@vscode/vsce": "^2.30.0",
+    "typescript": "^5.4.0"
   },
   "dependencies": {
     "@vscode/debugadapter": "^1.65.0",
-    "@vscode/debugprotocol": "^1.65.0"
+    "@vscode/debugprotocol": "^1.65.0",
+    "ssh2": "^1.17.0"
   },
   "author": "shibu",
   "icon": "icon.png"

@@ -1,14 +1,92 @@
 import { DebugProtocol } from '@vscode/debugprotocol';
 
+export interface DeviceConfig {
+  id: string;
+  name: string;
+  host: string;
+  sshPort: number;
+  sshUser: string;
+  sshAuth: 'password' | 'key';
+  sshKeyPath?: string;
+  gdbPath: string;
+  arch: 'arm64' | 'x86_64' | 'auto';
+  tags: string[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface HealthCheck {
+  type: 'port' | 'file' | 'socket';
+  value: string;
+}
+
+export interface DebugTarget {
+  processName: string;
+  debug: boolean;
+  useSudo: boolean;
+  binaryPath?: string;
+  startCommand?: string;
+  envVars?: Record<string, string>;
+  container?: string;
+  healthCheck?: HealthCheck;
+}
+
+export interface DeployFile {
+  localPath: string;
+  remotePath: string;
+  chmod: boolean;
+}
+
+export type DebugMode = 'restart-and-debug' | 'attach-only';
+
+export interface OrchestrationConfig {
+  deviceId: string;
+  mode: DebugMode;
+  restartCommand: string;
+  useSudoForRestart: boolean;
+  targets: DebugTarget[];
+  envVars: Record<string, string>;
+  timeout: number;
+  preBuildCommand: string;
+  deployFiles: DeployFile[];
+  remoteLogPaths?: string[];
+}
+
+export type SessionStatus = 'pending' | 'running' | 'stopped' | 'paused' | 'exited' | 'error';
+
+export interface SessionState {
+  id: string;
+  targetName: string;
+  status: SessionStatus;
+  pid?: number;
+  gdbserverPort: number;
+  breakpointCount: number;
+  threadCount: number;
+  pausedLine?: number;
+  pausedFile?: string;
+  memoryKB?: number;
+  error?: string;
+  startedAt: number;
+}
+
+export type LogLevel = 'info' | 'warn' | 'error' | 'success';
+
+export interface LogEntry {
+  level: LogLevel;
+  text: string;
+  ts: number;
+}
+
 export interface OmniBreakConfig extends DebugProtocol.LaunchRequestArguments {
   targetHost: string;
   targetPort: number;
   sshUser: string;
   sshPort: number;
   sshPassword?: string;
+  sudoPassword?: string;
   binaryPath: string;
-  symbolFile?: string;
   gdbPath: string;
+  symbolFile?: string;
   sourceFileMap: Record<string, string>;
   nonStopMode: boolean;
   deploySource?: string;
@@ -19,7 +97,7 @@ export interface OmniBreakConfig extends DebugProtocol.LaunchRequestArguments {
   solibSearchPath?: string;
   useSudo?: boolean;
   skipGdbserverStart?: boolean;
-  // Legacy
+  envVars?: Record<string, string>;
   localBinaryPath?: string;
   remoteBinaryPath?: string;
   robotHost?: string;

@@ -1,4 +1,4 @@
-import { ChildProcess, spawn } from 'child_process';
+import { Client, ClientChannel } from 'ssh2';
 import { EventEmitter } from 'events';
 import { GdbMiParser } from './gdbMiParser';
 import { MiResult, MiAsyncRecord } from '../shared/types';
@@ -7,22 +7,18 @@ import { logger } from '../shared/logging';
 export declare interface GdbMiClient {
   on(event: 'stopped', listener: (data: string) => void): this;
   on(event: 'running', listener: (data: string) => void): this;
-  on(event: 'threadCreated', listener: (data: string) => void): this;
-  on(event: 'threadExited', listener: (data: string) => void): this;
   on(event: 'output', listener: (category: string, text: string) => void): this;
   on(event: 'exit', listener: (code: number | null, signal: string | null) => void): this;
 }
 
 export interface GdbLaunchOptions {
   gdbPath: string;
-  /** If set, run GDB on remote host via SSH */
-  sshRemote?: { host: string; user: string; port?: number; password?: string };
-  /** If set, connect GDB to this host:port (local or remote) */
-  connectTarget?: { host: string; port: number };
+  sshRemote?: { host: string; user: string; port?: number; password?: string; keyPath?: string };
 }
 
 export class GdbMiClient extends EventEmitter {
-  private process: ChildProcess | null = null;
+  private sshClient: Client | null = null;
+  private gdbStream: ClientChannel | null = null;
   private parser: GdbMiParser;
   private token = 0;
   private pending = new Map<number, { resolve: (r: MiResult) => void; reject: (e: Error) => void }>();
@@ -38,72 +34,75 @@ export class GdbMiClient extends EventEmitter {
   }
 
   get alive(): boolean { return this.isAlive; }
-  get proc(): ChildProcess | null { return this.process; }
 
-  async launch(extraArgs: string[] = []): Promise<void> {
-    const args = ['--interpreter=mi3', '--quiet', ...extraArgs];
+  async init(): Promise<void> {
+    await this.launch();
+    await this.sendCommand('-gdb-set mi-async on');
+    logger.info('GDB/MI async mode enabled');
+  }
 
-    // Determine: local or SSH?
+  // ═══ SSH2-based launch ═══
+  async launch(): Promise<void> {
+    const gdbArgs = ['--interpreter=mi3', '--quiet'];
+
     if (this.opts.sshRemote) {
       const r = this.opts.sshRemote;
-      if (r.password) {
-        const sshArgs = [
-          '-p', r.password, 'ssh',
-          '-o', 'StrictHostKeyChecking=no',
-          '-o', 'ServerAliveInterval=30',
-          ...(r.port ? ['-p', String(r.port)] : []),
-          `${r.user}@${r.host}`,
-          this.opts.gdbPath,
-          ...args,
-        ];
-        logger.info(`Launching GDB via sshpass: sshpass ${sshArgs.slice(2).join(' ')}`);
-        this.process = spawn('sshpass', sshArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
-      } else {
-        const sshArgs = [
-          '-o', 'StrictHostKeyChecking=no',
-          '-o', 'ServerAliveInterval=30',
-          ...(r.port ? ['-p', String(r.port)] : []),
-          `${r.user}@${r.host}`,
-          this.opts.gdbPath,
-          ...args,
-        ];
-        logger.info(`Launching GDB via SSH: ssh ${sshArgs.join(' ')}`);
-        this.process = spawn('ssh', sshArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
-      }
+      this.sshClient = new Client();
+      const config: any = {
+        host: r.host, port: r.port || 22, username: r.user,
+        readyTimeout: 15000, keepaliveInterval: 10000,
+      };
+      if (r.password) config.password = r.password;
+      if (r.keyPath) config.privateKey = require('fs').readFileSync(r.keyPath);
+
+      await new Promise<void>((resolve, reject) => {
+        this.sshClient!.on('ready', () => resolve());
+        this.sshClient!.on('error', (err) => reject(err));
+        this.sshClient!.connect(config);
+      });
+      logger.info(`SSH connected to ${r.host}`);
+
+      const fullCmd = `${this.opts.gdbPath} ${gdbArgs.join(' ')}`;
+      logger.info(`Launching GDB via SSH2: ${fullCmd}`);
+
+      await new Promise<void>((resolve, reject) => {
+        this.sshClient!.exec(fullCmd, (err, stream) => {
+          if (err) { reject(err); return; }
+          this.gdbStream = stream;
+          stream.stdout?.on('data', (chunk: Buffer) => { this.parser.feed(chunk.toString()); });
+          stream.stderr?.on('data', (chunk: Buffer) => { this.emit('output', 'stderr', chunk.toString()); });
+          stream.on('close', (code: number | null) => {
+            logger.info(`GDB exited: code=${code}`);
+            this.isAlive = false;
+            this.emit('exit', code, null);
+            for (const [, p] of this.pending) p.reject(new Error(`GDB exited`));
+            this.pending.clear();
+            this.cmdQueue = [];
+          });
+          setTimeout(() => { this.isAlive = true; resolve(); }, 500);
+        });
+      });
     } else {
-      logger.info(`Launching GDB: ${this.opts.gdbPath} ${args.join(' ')}`);
-      this.process = spawn(this.opts.gdbPath, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+      // Local GDB
+      const { spawn } = require('child_process');
+      const proc: any = spawn(this.opts.gdbPath, gdbArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
+      logger.info(`Launching local GDB: ${this.opts.gdbPath}`);
+      await new Promise<void>((resolve, reject) => {
+        proc.stdout?.on('data', (chunk: Buffer) => { this.parser.feed(chunk.toString()); });
+        proc.stderr?.on('data', (chunk: Buffer) => { this.emit('output', 'stderr', chunk.toString()); });
+        proc.on('error', (err: Error) => { this.isAlive = false; reject(err); });
+        proc.on('exit', (code: number | null, signal: string | null) => {
+          this.isAlive = false; this.emit('exit', code, signal);
+          for (const [, p] of this.pending) p.reject(new Error(`GDB exited`));
+          this.pending.clear(); this.cmdQueue = [];
+        });
+        (this as any)._localProc = proc;
+        setTimeout(() => { this.isAlive = true; resolve(); }, 300);
+      });
     }
-
-    return new Promise((resolve, reject) => {
-      this.process!.stdout?.on('data', (chunk: Buffer) => {
-        this.parser.feed(chunk.toString());
-      });
-
-      this.process!.stderr?.on('data', (chunk: Buffer) => {
-        this.emit('output', 'stderr', chunk.toString());
-      });
-
-      this.process!.on('error', (err) => {
-        logger.error(`GDB spawn error: ${err.message}`);
-        this.isAlive = false;
-        reject(err);
-      });
-
-      this.process!.on('exit', (code, signal) => {
-        logger.info(`GDB exited: code=${code}, signal=${signal}`);
-        this.isAlive = false;
-        this.emit('exit', code, signal);
-        for (const [, p] of this.pending) {
-          p.reject(new Error(`GDB exited with code ${code}`));
-        }
-        this.pending.clear();
-        this.cmdQueue = [];
-      });
-
-      setTimeout(() => { this.isAlive = true; resolve(); }, 300);
-    });
   }
+
+  // ═══ Command queue ═══
 
   sendCommand(cmd: string): Promise<MiResult> {
     return new Promise((resolve, reject) => {
@@ -112,33 +111,31 @@ export class GdbMiClient extends EventEmitter {
     });
   }
 
-  async init(): Promise<void> {
-    await this.launch();
-    await this.sendCommand('-gdb-set mi-async on');
-    logger.info('GDB/MI async mode enabled');
-  }
-
   async terminate(): Promise<void> {
-    if (!this.process) return;
-    try { await this.sendCommand('-gdb-exit'); } catch { /* ignore */ }
-    if (this.process && !this.process.killed) {
-      this.process.kill('SIGTERM');
-      setTimeout(() => {
-        if (this.process && !this.process.killed) this.process.kill('SIGKILL');
-      }, 2000);
+    try { await this.sendCommand('-gdb-exit'); } catch {}
+    if (this.sshClient) {
+      try { this.sshClient.end(); } catch {}
+    } else {
+      const proc = (this as any)._localProc;
+      if (proc && !proc.killed) { proc.kill('SIGTERM'); setTimeout(() => { if (!proc.killed) proc.kill('SIGKILL'); }, 2000); }
     }
   }
 
   private processQueue(): void {
-    if (this.processing || this.cmdQueue.length === 0 || !this.process) return;
+    if (this.processing || this.cmdQueue.length === 0) return;
     this.processing = true;
     const item = this.cmdQueue.shift()!;
     this.token++;
     const token = this.token;
     const fullCmd = `${token}${item.cmd}\n`;
-    // logger.debug(`GDB << ${fullCmd.trim()}`);
     this.pending.set(token, item);
-    this.process.stdin?.write(fullCmd);
+
+    if (this.sshClient && this.gdbStream) {
+      this.gdbStream.write(fullCmd);
+    } else {
+      const proc = (this as any)._localProc;
+      if (proc) proc.stdin?.write(fullCmd);
+    }
     this.processing = false;
     if (this.cmdQueue.length > 0) setImmediate(() => this.processQueue());
   }
@@ -163,8 +160,7 @@ export class GdbMiClient extends EventEmitter {
         else if (record.class === 'running') this.emit('running', record.data);
         break;
       case 'notify':
-        if (record.class === 'thread-created') this.emit('threadCreated', record.data);
-        else if (record.class === 'thread-exited') this.emit('threadExited', record.data);
+        this.emit('output', 'console', this.stripQuotes(record.data));
         break;
       case 'console': this.emit('output', 'console', this.stripQuotes(record.data)); break;
       case 'target': this.emit('output', 'target', this.stripQuotes(record.data)); break;
@@ -174,7 +170,6 @@ export class GdbMiClient extends EventEmitter {
 
   private stripQuotes(data: string): string {
     const match = data.match(/^"([^]*)"$/);
-    if (match) return match[1].replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\\\/g, '\\');
-    return data;
+    return match ? match[1].replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\\\/g, '\\') : data;
   }
 }
