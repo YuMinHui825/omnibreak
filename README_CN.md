@@ -1,4 +1,4 @@
-<p align="center"><img src="icon.png" width="128" alt="OmniBreak" /></p>
+<p align="center"><img src="resources/omnibreak.png" width="128" alt="OmniBreak" /></p>
 
 # OmniBreak
 
@@ -47,7 +47,7 @@ sudo apt install -y gdbserver gdb-multiarch
 ### 直接安装
 
 ```bash
-code --install-extension omnibreak-0.2.0.vsix
+code --install-extension omnibreak-0.2.0-beta.vsix
 ```
 
 ### 从源码构建
@@ -58,7 +58,7 @@ cd omnibreak
 npm install
 npm run compile
 npm run package
-code --install-extension omnibreak-0.2.0.vsix
+code --install-extension omnibreak-0.2.0-beta.vsix
 ```
 
 ## 快速开始
@@ -90,7 +90,7 @@ code --install-extension omnibreak-0.2.0.vsix
 | 标签 | 说明 |
 |-----|-------------|
 | **Config** | 设备管理、部署文件、调试目标、远程日志路径 |
-| **Stats** | CPU / 内存 / GPU 监控（Phase 2） |
+| **Stats** | CPU / 内存 / GPU 监控 |
 | **Leaks** | 内存泄漏检测（Phase 3） |
 | **Logs** | 实时日志查看，每个远程日志文件一个子页面 |
 

@@ -47,7 +47,7 @@ That's it. Both packages are in standard Ubuntu/Debian repos.
 ### Download & Install
 
 ```bash
-code --install-extension omnibreak-0.2.0.vsix
+code --install-extension omnibreak-0.2.0-beta.vsix
 ```
 
 ### Build from Source
@@ -58,7 +58,7 @@ cd omnibreak
 npm install
 npm run compile
 npm run package
-code --install-extension omnibreak-0.2.0.vsix
+code --install-extension omnibreak-0.2.0-beta.vsix
 ```
 
 ## Quick Start
@@ -90,7 +90,7 @@ Click **Connect** to test the SSH connection. Once connected, click **Debug**. O
 | Tab | Description |
 |-----|-------------|
 | **Config** | Device management, deploy files, debug targets, remote log paths |
-| **Stats** | CPU / Memory / GPU monitoring (Phase 2) |
+| **Stats** | CPU / Memory / GPU monitoring |
 | **Leaks** | Memory leak detection (Phase 3) |
 | **Logs** | Real-time log viewer with sub-pages per remote log file |
 
