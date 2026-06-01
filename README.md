@@ -90,7 +90,7 @@ Click **Connect** to test the SSH connection. Once connected, click **Debug**. O
 | Tab | Description |
 |-----|-------------|
 | **Config** | Device management, deploy files, debug targets, remote log paths |
-| **Stats** | CPU / Memory / GPU monitoring |
+| **Stats** | CPU / Memory / GPU monitoring (Phase 2) |
 | **Leaks** | Memory leak detection (Phase 3) |
 | **Logs** | Real-time log viewer with sub-pages per remote log file |
 

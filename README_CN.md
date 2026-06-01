@@ -90,7 +90,7 @@ code --install-extension omnibreak-0.2.0-beta.vsix
 | 标签 | 说明 |
 |-----|-------------|
 | **Config** | 设备管理、部署文件、调试目标、远程日志路径 |
-| **Stats** | CPU / 内存 / GPU 监控 |
+| **Stats** | CPU / 内存 / GPU 监控（Phase 2） |
 | **Leaks** | 内存泄漏检测（Phase 3） |
 | **Logs** | 实时日志查看，每个远程日志文件一个子页面 |
 
