@@ -147,6 +147,8 @@ MIT
 ---
 
 <p align="center">
-  <b>If you find OmniBreak useful, please give it a ⭐</b><br/>
+  <b>If you find OmniBreak useful, please give it a ⭐</b><br/><br/>
+  <img src="IMG_9667.JPG" width="200" alt="Alipay" /><br/>
+  <sub>Like this project? <b>Buy me a coffee ☕</b></sub><br/>
   <a href="https://github.com/YuMinHui825/omnibreak">Star on GitHub</a>
 </p>
