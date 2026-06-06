@@ -13,3 +13,5 @@ add_executable(e2e src/e2e.c)
 add_library(demo SHARED src/libdemo.c)
 add_executable(host src/host.c)
 target_link_libraries(host demo pthread)
+
+add_executable(leakdemo src/leakdemo.c)

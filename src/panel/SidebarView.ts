@@ -28,6 +28,10 @@ export class SidebarView implements vscode.WebviewViewProvider {
         case 'test-connection':{const d=this.deviceManager.get(m.deviceId);if(!d)return;const cr=await this.orchestrator.testConnection(d,await this.deviceManager.getSshPassword(m.deviceId));this.post({type:'connection-test-result',deviceId:m.deviceId,ok:cr.ok,info:cr.info});break;}
         case 'start-debug':{this.currentDeviceId=m.config.deviceId;const d=this.deviceManager.get(m.config.deviceId);if(!d)return;const result=await this.orchestrator.start(m.config,d,await this.deviceManager.getSshPassword(m.config.deviceId),await this.deviceManager.getSudoPassword(m.config.deviceId));if(result){this.stateManager.log('info','DAP sessions to create: '+result.length);for(const s of result){this.stateManager.log('info','DAP: '+s.name+' bin='+(s.binaryPath||'none')+' port='+s.port);await this.startDap(s.name,s.port,s.binaryPath);}}break;}
         case 'disconnect':{await this.orchestrator.stop();break;}
+        case 'request-stats':{const stats=await this.orchestrator.collectStats();this.post({type:'stats-update',stats});break;}
+        case 'request-leak-scan':{const report=await this.orchestrator.collectLeakReport();this.post({type:'leak-update',report});break;}
+        case 'start-leak-monitor':{break;}
+        case 'stop-leak-monitor':{break;}
               }
     });
     wv.webview.html=H();
@@ -82,7 +86,7 @@ hr{border:none;border-top:1px solid var(--bd);margin:10px 0}
 var diag=document.getElementById('diag');
 function die(m){diag.textContent='Failed to load OmniBreak panel: '+m;diag.style.display='block';console.warn(m)}
 try{var v=acquireVsCodeApi(),saved=v.getState()||{};}catch(e){die('acquireVsCodeApi: '+e.message);return}
-var devices=[],sessions=[],logs=saved.logs||[],tab='config',sel=saved.sel||'',ed=null,sf=false,conn=saved.conn||'',logView='actions',busy=false;
+var devices=[],sessions=[],logs=saved.logs||[],tab='config',sel=saved.sel||'',ed=null,sf=false,conn=saved.conn||'',logView='actions',busy=false,stats=null,statsTimer=null,leak=null,leakTimer=null;
 var deploy=[],targets=[],rlogs=saved.rlogs||[];if(saved.deploy&&saved.deploy.length)deploy=saved.deploy;if(saved.targets&&saved.targets.length)targets=saved.targets;
 var fs={n:'',h:'',u:'root',p:'22',pw:'',sp:'',g:'/usr/bin/gdb-multiarch'};
 
@@ -90,13 +94,15 @@ function E(t,a,k){var e=document.createElement(t);if(a)Object.keys(a).forEach(fu
 
 window.addEventListener('message',function(e){var m=e.data;
   if(m.type==='devices-loaded'){devices=m.devices;if(tab==='config')R()}
-  else if(m.type==='session-update'){sessions=m.sessions;if(sessions.length&&sessions.every(function(s){return s.status==='exited'||s.status==='error'}))busy=false;if(tab==='config')R()}
+  else if(m.type==='session-update'){sessions=m.sessions;var hasActive=sessions.some(function(s){return s.status==='running'||s.status==='pending'});if(!hasActive){busy=false;if(statsTimer){clearInterval(statsTimer);statsTimer=null;stats=null}}else if(tab==='stats'&&!statsTimer){v.postMessage({type:'request-stats'});statsTimer=setInterval(function(){v.postMessage({type:'request-stats'})},1000)}if(tab==='config')R()}
   else if(m.type==='log'){logs.push(m.entry);if(logs.length>500)logs=logs.slice(-300);if(tab==='logs')R()}
   else if(m.type==='connection-test-result'){logs.push({level:m.ok?'success':'error',text:m.info,ts:Date.now()});conn=m.ok?m.deviceId:'';if(tab==='config')R()}
   else if(m.type==='connection-lost'){conn='';busy=false;if(tab==='config')R()}
+  else if(m.type==='stats-update'){stats=m.stats;if(tab==='stats')R()}
+  else if(m.type==='leak-update'){leak=m.report;if(tab==='leaks')R()}
 });
 
-function R(){var r=document.getElementById('root');r.innerHTML='';if(tab==='config')RC(r);else if(tab==='stats')r.appendChild(E('div',{style:{textAlign:'center',padding:'36px 0',color:'var(--ds)',fontSize:'12px'}},['CPU / Memory / GPU monitoring']));else if(tab==='leaks')r.appendChild(E('div',{style:{textAlign:'center',padding:'36px 0',color:'var(--ds)',fontSize:'12px'}},['Memory leak detection']));else if(tab==='logs')RL(r);try{v.setState({deploy:deploy,targets:targets,conn:conn,sel:sel,logs:logs.slice(-200),rlogs:rlogs})}catch(e){}}
+function R(){var r=document.getElementById('root');r.innerHTML='';if(tab==='config')RC(r);else if(tab==='stats')RS(r);else if(tab==='leaks')RLk(r);else if(tab==='logs')RL(r);try{v.setState({deploy:deploy,targets:targets,conn:conn,sel:sel,logs:logs.slice(-200),rlogs:rlogs})}catch(e){}}
 
 function RC(r){
   r.appendChild(E('div',{class:'hd'},[E('span',{T:'Devices ('+devices.length+')'})]));
@@ -124,6 +130,74 @@ function RC(r){
 }
 function sd(did){if(busy)return;busy=true;R();var tg=targets.filter(function(t){return t.processName&&t.debug!==false}).map(function(t){var ev=undefined;if(t.envVarsStr){ev={};t.envVarsStr.split(/\\n|\\r\\n|\\r/).forEach(function(l){var p=l.indexOf('=');if(p>0)ev[l.slice(0,p).trim()]=l.slice(p+1).trim()})}return{processName:t.processName,debug:!!t.debug,useSudo:!!t.useSudo,binaryPath:t.binaryPath,startCommand:t.startCommand,envVars:ev}});var df=deploy.filter(function(f){return f.localPath&&f.remotePath&&f.enabled!==false});v.postMessage({type:'start-debug',config:{deviceId:did||sel,mode:'restart-and-debug',restartCommand:'',useSudoForRestart:false,targets:tg,envVars:{},timeout:30,preBuildCommand:'',deployFiles:df.map(function(f){return{localPath:f.localPath,remotePath:f.remotePath,chmod:true}}),remoteLogPaths:rlogs.filter(function(p){return p})}});}
 
+function RS(r){
+  if(!stats||!stats.processes||!stats.processes.length){
+    var noSessions=sessions.filter(function(s){return s.status==='running'||s.status==='pending'}).length===0;
+    r.appendChild(E('div',{style:{textAlign:'center',padding:'36px 0',color:'var(--ds)',fontSize:'12px'}},['No active sessions. Start debugging to see process stats.']));return
+  }
+  stats.processes.forEach(function(p){
+    var card=E('div',{class:'card'});
+    var hdr=E('div',{class:'card-row',style:{marginBottom:'4px'}});
+    hdr.appendChild(E('span',{style:{fontWeight:'600',fontSize:'12px',flex:'1'},T:p.processName}));
+    hdr.appendChild(E('span',{style:{fontSize:'10px',color:'var(--ds)'},T:'PID:'+p.pid}));
+    card.appendChild(hdr);
+    var rows=[['CPU',p.cpuPercent+'%',p.cpuPercent>80?'#e5534b':p.cpuPercent>60?'#e3b341':'#57ab5a'],
+              ['RSS',rssStr(p.rssMB),'var(--fg)'],
+              ['VSZ',p.vszMB+' MB','var(--fg)'],
+              ['Threads',String(p.threadCount),'var(--fg)'],
+              ['State',p.state,'var(--fg)']];
+    if(p.gpuPercent!==undefined)rows.push(['GPU',p.gpuPercent+'%',p.gpuPercent>80?'#e5534b':p.gpuPercent>60?'#e3b341':'#57ab5a']);
+    rows.forEach(function(rr){
+      var row=E('div',{class:'rw',style:{marginBottom:'2px',fontSize:'11px'}});
+      row.appendChild(E('span',{style:{color:'var(--ds)',minWidth:'56px'},T:rr[0]}));
+      row.appendChild(E('span',{style:{color:rr[2],fontWeight:'600'},T:rr[1]}));
+      card.appendChild(row);
+    });
+    r.appendChild(card);
+  });
+  r.appendChild(E('div',{style:{fontSize:'10px',color:'var(--ds)',textAlign:'center',marginTop:'12px'}},['Updated: '+new Date(stats.ts).toLocaleTimeString()]));
+}
+function rssStr(mb){return mb<1?(mb*1024).toFixed(0)+' KB':mb<1024?mb.toFixed(1)+' MB':(mb/1024).toFixed(1)+' GB'}
+function RLk(r){
+  if(!leak||!leak.current){
+    r.appendChild(E('div',{style:{textAlign:'center',padding:'36px 0',color:'var(--ds)',fontSize:'12px'}},['No leak data. Start monitoring to establish a baseline.']));return
+  }
+  var riskColors={none:'#57ab5a',low:'#57ab5a',medium:'#e3b341',high:'#e5534b'};
+  var card=E('div',{class:'card'});
+  var hdr=E('div',{class:'card-row',style:{marginBottom:'6px'}});
+  hdr.appendChild(E('span',{style:{fontWeight:'600',fontSize:'12px',flex:'1'},T:leak.processName}));
+  hdr.appendChild(E('span',{style:{fontSize:'10px',color:'var(--ds)'},T:'PID:'+leak.pid}));
+  card.appendChild(hdr);
+  // Risk indicator
+  var rb=E('div',{class:'rw',style:{marginBottom:'8px'}});
+  rb.appendChild(E('span',{style:{fontSize:'10px',color:'var(--ds)'},T:'Risk:'}));
+  rb.appendChild(E('span',{style:{fontSize:'11px',fontWeight:'700',color:riskColors[leak.risk]},T:leak.risk.toUpperCase()}));
+  card.appendChild(rb);
+  // Memory breakdown
+  var items=[['Heap',leak.current.heapKB+' KB',leak.baseline?(leak.current.heapKB-leak.baseline.heapKB)+' KB':'—'],
+             ['Stack',leak.current.stackKB+' KB',''],
+             ['Data',leak.current.dataKB+' KB',''],
+             ['RSS',leak.current.rssKB+' KB',leak.baseline?(leak.current.rssKB-leak.baseline.rssKB)+' KB':'—'],
+             ['VSZ',leak.current.vszKB+' KB',''],
+             ['Heap Δ',(leak.heapDeltaKB>0?'+':'')+leak.heapDeltaKB+' KB',''],
+             ['RSS Rate',(leak.rssGrowthRate>0?'+':'')+leak.rssGrowthRate.toFixed(1)+' KB/s','']];
+  items.forEach(function(it){
+    var row=E('div',{class:'rw',style:{marginBottom:'2px',fontSize:'11px'}});
+    row.appendChild(E('span',{style:{color:'var(--ds)',minWidth:'56px'},T:it[0]}));
+    row.appendChild(E('span',{style:{fontWeight:'600'},T:it[1]}));
+    if(it[2])row.appendChild(E('span',{style:{fontSize:'10px',color:'var(--ds)',marginLeft:'6px'},T:'(Δ '+it[2]+')'}));
+    card.appendChild(row);
+  });
+  r.appendChild(card);
+  // Guide to locate leak source
+  if(leak.risk!=='none'){
+    var guide=E('div',{class:'card',style:{marginTop:'8px',background:leak.risk==='high'?'#3d1a1a':'#3d3510'}});
+    guide.appendChild(E('div',{style:{fontWeight:'600',fontSize:'11px',marginBottom:'4px',color:leak.risk==='high'?'#e5534b':'#e3b341'},T:'Leak Source Trace'}));
+    guide.appendChild(E('div',{style:{fontSize:'10px',color:'var(--fg)',lineHeight:'1.5'},H:'Run these in <b>Debug Console</b>:<br><br><code style=\"background:var(--bg);padding:2px 5px;border-radius:3px\">!break malloc</code><br><code style=\"background:var(--bg);padding:2px 5px;border-radius:3px\">!commands</code><br><code style=\"background:var(--bg);padding:2px 5px;border-radius:3px\">silent</code> &nbsp;<code style=\"background:var(--bg);padding:2px 5px;border-radius:3px\">bt 3</code> &nbsp;<code style=\"background:var(--bg);padding:2px 5px;border-radius:3px\">continue</code><br><code style=\"background:var(--bg);padding:2px 5px;border-radius:3px\">end</code><br><code style=\"background:var(--bg);padding:2px 5px;border-radius:3px\">!continue</code><br><br>Each malloc() call prints filename + line number.'}));
+    r.appendChild(guide);
+  }
+  r.appendChild(E('div',{style:{fontSize:'10px',color:'var(--ds)',textAlign:'center',marginTop:'12px'}},['Samples: '+leak.sampleCount+' | Updated: '+new Date(leak.current.ts).toLocaleTimeString()]));
+}
 function RL(r){
   var hd=E('div',{class:'hd'});hd.appendChild(E('span',{T:'Logs'}));hd.appendChild(E('button',{class:'btn btn-xs btn-p',T:'Clear',style:{marginLeft:'auto'},onclick:function(){logs=[];R()}}));r.appendChild(hd);
   if(rlogs.length){var sub=E('div',{class:'row',style:{marginBottom:'6px',gap:'2px',flexWrap:'wrap'}});
@@ -137,7 +211,8 @@ function RL(r){
 }
 
 document.addEventListener('mousemove',function(e){document.documentElement.style.setProperty('--mx',e.clientX+'px');document.documentElement.style.setProperty('--my',e.clientY+'px')});
-document.querySelectorAll('.tab').forEach(function(t){t.onclick=function(){tab=t.dataset.t;document.querySelectorAll('.tab').forEach(function(x){x.className='tab'+(x===t?' on':'')});R()}});
+document.querySelectorAll('.tab').forEach(function(t){t.onclick=function(){tab=t.dataset.t;document.querySelectorAll('.tab').forEach(function(x){x.className='tab'+(x===t?' on':'')});if(statsTimer){clearInterval(statsTimer);statsTimer=null}if(leakTimer){clearInterval(leakTimer);leakTimer=null}if(tab==='stats'){v.postMessage({type:'request-stats'});statsTimer=setInterval(function(){v.postMessage({type:'request-stats'})},1000)}if(tab==='leaks'){v.postMessage({type:'start-leak-monitor'});v.postMessage({type:'request-leak-scan'});leakTimer=setInterval(function(){v.postMessage({type:'request-leak-scan'})},2000)}R()}});
+if(sessions.some(function(s){return s.status==='running'})&&tab==='leaks'&&!leakTimer){v.postMessage({type:'start-leak-monitor'});v.postMessage({type:'request-leak-scan'});leakTimer=setInterval(function(){v.postMessage({type:'request-leak-scan'})},2000)}
 try{R();v.postMessage({type:'load-devices'});}catch(e){die('init: '+e.message)}
 })();
 </script></body></html>`;}

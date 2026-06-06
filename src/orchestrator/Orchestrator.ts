@@ -5,6 +5,9 @@ import { SessionManager } from './SessionManager';
 import type { DeviceConfig, OrchestrationConfig, LogEntry, SessionState } from '../shared/types';
 import { DEFAULT_GDBSERVER_BASE_PORT } from '../shared/constants';
 
+const LEAK_MEDIUM_THRESHOLD_KB = 64;
+const LEAK_HIGH_THRESHOLD_KB = 128;
+
 export type LogCallback = (entry: LogEntry) => void;
 export type SessionsCallback = (sessions: SessionState[]) => void;
 
@@ -18,6 +21,7 @@ export class Orchestrator {
   private onConnectionLost: (() => void) | null = null;
   private workspaceRoot = '';
   private tailClosers: Array<{ close: () => void }> = [];
+  private leakSamples: Map<string, number[]> = new Map();
 
   setLogCallback(cb: LogCallback) { this.onLog = cb; }
   setSessionsCallback(cb: SessionsCallback) { this.onSessions = cb; }
@@ -102,9 +106,12 @@ export class Orchestrator {
       const session = this.sessions.add(t.processName);
       const pid = await this.scanner!.waitForProcess(t, config.timeout);
       if (pid === null) { this.sessions.update(session.id, { status: 'error', error: `Timeout (${config.timeout}s)` }); this.log('error', t.processName + ': timeout'); continue; }
-      this.sessions.update(session.id, { status: 'running', pid });
-      this.log('success', t.processName + ': PID ' + pid);
-      started.push({ id: session.id, port: session.gdbserverPort, name: t.processName, pid, binaryPath: t.binaryPath });
+      // Correct PID: run ps to find the real binary (skip shell wrappers)
+      const realPid = t.binaryPath ? await this.findRealPid(t.binaryPath, pid) : pid;
+      if (realPid !== pid) this.log('info', t.processName + ': PID corrected ' + pid + ' -> ' + realPid);
+      this.sessions.update(session.id, { status: 'running', pid: realPid });
+      this.log('success', t.processName + ': PID ' + realPid);
+      started.push({ id: session.id, port: session.gdbserverPort, name: t.processName, pid: realPid, binaryPath: t.binaryPath });
     }
     if (!started.length) { this.log('error', 'No processes started'); return []; }
 
@@ -125,7 +132,186 @@ export class Orchestrator {
   }
 
   getSessionManager(): SessionManager | null { return this.sessions; }
-  getSshConnection(): SshConnection | null { return this.ssh; }
+  getSshConnection(): SshConnection | null { return this.ssh || this._testSsh; }
+
+  async collectLeakReport(baseline?: import('../shared/types').MemorySnapshot): Promise<import('../shared/types').LeakReport | null> {
+    const ssh = this.ssh || this._testSsh;
+    if (!ssh || !this.sessions) return null;
+    const active = this.sessions.active.filter(s => s.pid);
+    if (!active.length) return null;
+    try {
+      const s = active[0];
+      const r = await ssh.exec(`grep -E '^(Vm|Rss)' /proc/${s.pid}/status 2>/dev/null; echo ===; cat /proc/${s.pid}/smaps 2>/dev/null | grep -E '^[0-9a-f]|^Size:|^Anonymous:' | head -120`, false, 5000);
+      const parts = r.stdout.split('===');
+      const status: Record<string,number> = {};
+      (parts[0]||'').split('\n').forEach(line => {
+        const m = line.match(/^(\w+):\s+(\d+)/);
+        if(m) status[m[1].toLowerCase()] = parseInt(m[2]);
+      });
+      let heapKB=0,stackKB=0,heapAnonKB=0;
+      let curAddr='',curSize=0,curAnon=0,consumed=false;
+      (parts[1]||'').split('\n').forEach(line => {
+        const am=line.match(/^([0-9a-f]+)-/);
+        if(am){
+          if(!consumed&&curAddr.includes('[heap]')){heapKB+=curSize;heapAnonKB+=curAnon;}
+          if(!consumed&&curAddr.includes('[stack]'))stackKB+=curSize;
+          curAddr=line;curSize=0;curAnon=0;consumed=false;
+        }
+        const sm=line.match(/^Size:\s+(\d+)/); if(sm){curSize=parseInt(sm[1]);consumed=false}
+        const an=line.match(/^Anonymous:\s+(\d+)/); if(an){curAnon=parseInt(an[1]);consumed=false}
+      });
+      if(!consumed){if(curAddr.includes('[heap]')){heapKB+=curSize;heapAnonKB+=curAnon;}if(curAddr.includes('[stack]'))stackKB+=curSize;}
+      // Use heapAnonKB as primary metric (actual used pages, more sensitive)
+      const heapMetric = heapAnonKB > 0 ? heapAnonKB : heapKB;
+      const current: import('../shared/types').MemorySnapshot = {
+        heapKB:heapMetric,stackKB,
+        dataKB:(status.vmdata||0),
+        rssKB:(status.vmrss||0),
+        vszKB:(status.vmsize||0),
+        ts:Date.now(),
+      };
+      // Rolling heap samples for trend detection
+      const key = s.targetName;
+      let samples = this.leakSamples.get(key) || [];
+      samples.push(current.heapKB);
+      if(samples.length > 60) samples = samples.slice(-60);
+      this.leakSamples.set(key, samples);
+      // Auto-detect: compare first vs last quartile
+      let autoRisk: import('../shared/types').LeakReport['risk'] = 'none';
+      if(samples.length >= 10) {
+        const n = samples.length;
+        const firstQ = samples.slice(0, Math.floor(n/4)).reduce((a,b)=>a+b,0) / Math.floor(n/4);
+        const lastQ = samples.slice(-Math.floor(n/4)).reduce((a,b)=>a+b,0) / Math.floor(n/4);
+        const growth = lastQ - firstQ;
+        // Count how many points show growth vs first value
+        let growing = 0;
+        for(let i=1;i<n;i++) if(samples[i] > samples[0]) growing++;
+        const growthRatio = growing / (n-1);
+        if(growth > LEAK_HIGH_THRESHOLD_KB && growthRatio > 0.7) autoRisk = 'high';
+        else if(growth > LEAK_MEDIUM_THRESHOLD_KB && growthRatio > 0.5) autoRisk = 'medium';
+        else if(growth > 0 && growthRatio > 0.4) autoRisk = 'low';
+      }
+      const heapDeltaKB=baseline?current.heapKB-baseline.heapKB:0;
+      const elapsed=baseline?(current.ts-baseline.ts)/1000:0;
+      const rssGrowthRate=elapsed>0&&baseline?((current.rssKB-baseline.rssKB)/elapsed):0;
+      const risk = autoRisk !== 'none' ? autoRisk :
+        heapDeltaKB>1024||rssGrowthRate>100?'high':
+        heapDeltaKB>256||rssGrowthRate>20?'medium':
+        heapDeltaKB>0||rssGrowthRate>0?'low':'none';
+      return {
+        processName:s.targetName,pid:s.pid!,
+        current,baseline,
+        heapDeltaKB,rssGrowthRate,risk,
+        sampleCount:samples.length,startedAt:baseline?.ts||current.ts,
+      };
+    } catch { return null; }
+  }
+
+  private async findRealPid(binaryPath: string, fallbackPid: number): Promise<number> {
+    try {
+      // Quick single-shot — if binary is already running, return it immediately
+      const r = await this.ssh!.exec(`ps -e -o pid= -o args=`, false, 5000);
+      for (const line of r.stdout.split('\n')) {
+        const m = line.trim().match(/^(\d+)\s+(.*)/);
+        if (!m) continue;
+        const p = parseInt(m[1], 10);
+        if (m[2].startsWith(binaryPath)) return p;
+      }
+    } catch {}
+    // Not found yet — schedule background retry every 2s, update session when found
+    const sessionManager = this.sessions;
+    this.schedulePidCorrection(binaryPath, fallbackPid, sessionManager);
+    return fallbackPid;
+  }
+
+  private schedulePidCorrection(binaryPath: string, fallbackPid: number, sm: any, attempt = 0) {
+    if (attempt > 10) return;
+    setTimeout(async () => {
+      try {
+        const r = await this.ssh!.exec(`ps -e -o pid= -o args=`, false, 5000);
+        for (const line of r.stdout.split('\n')) {
+          const m = line.trim().match(/^(\d+)\s+(.*)/);
+          if (!m) continue;
+          const p = parseInt(m[1], 10);
+          if (m[2].startsWith(binaryPath) && p !== fallbackPid) {
+            this.log('info', 'PID corrected: ' + fallbackPid + ' -> ' + p);
+            const session = sm.all.find((s: any) => s.pid === fallbackPid);
+            if (session) sm.update(session.id, { pid: p });
+            this.emitSessions();
+            return;
+          }
+        }
+        this.schedulePidCorrection(binaryPath, fallbackPid, sm, attempt + 1);
+      } catch { this.schedulePidCorrection(binaryPath, fallbackPid, sm, attempt + 1); }
+    }, 2000);
+  }
+
+  async collectStats(): Promise<import('../shared/types').SystemStats | null> {
+    const ssh = this.ssh || this._testSsh;
+    if (!ssh || !this.sessions) return null;
+    const active = this.sessions.active.filter(s => s.pid);
+    if (!active.length) return null;
+    try {
+      // Build a single command to query all PIDs at once
+      const pidList = active.map(s => s.pid).join(' ');
+      const cmds = [
+        `for p in ${pidList}; do echo "PID:$p"; ps -p $p -o %cpu=,rss=,vsz=,nlwp=,stat= --no-headers 2>/dev/null || echo "- - - - -"; done`,
+      ];
+      // Try nvidia-smi for GPU processes (best-effort)
+      cmds.push(`nvidia-smi --query-compute-apps=pid,used_gpu_memory --format=csv,noheader,nounits 2>/dev/null || echo NO_GPU`);
+      cmds.push(`tegrastats --interval 0 --count 1 2>/dev/null | head -1 || echo NO_TEGRA`);
+
+      const [psR, gpuR] = await Promise.all([
+        ssh.exec(cmds[0]),
+        ssh.exec(`${cmds[1]}; echo GPU_SPLIT; ${cmds[2]}`),
+      ]);
+
+      // Parse GPU data: pid -> gpuUtil estimate
+      const gpuPids: Record<number, number> = {};
+      if (gpuR.stdout && !gpuR.stdout.includes('NO_GPU')) {
+        const parts = gpuR.stdout.split('GPU_SPLIT');
+        // nvidia-smi compute apps
+        if (parts[0] && !parts[0].includes('NO_GPU')) {
+          parts[0].trim().split('\n').forEach(line => {
+            const f = line.split(',').map(s => s.trim());
+            const pid = parseInt(f[0]);
+            if (pid) gpuPids[pid] = (gpuPids[pid] || 0) + (parseInt(f[1]) || 0);
+          });
+        }
+      }
+
+      // Parse per-process stats
+      const processes: import('../shared/types').ProcessStats[] = [];
+      const blocks = psR.stdout.split('PID:').filter(b => b.trim());
+      for (const block of blocks) {
+        const lines = block.trim().split('\n');
+        const pid = parseInt(lines[0]);
+        const activeSession = active.find(s => s.pid === pid);
+        if (!pid || !activeSession) continue;
+        const vals = (lines[1] || '').trim().split(/\s+/);
+        const cpuPercent = parseFloat(vals[0]) || 0;
+        const rssKB = parseInt(vals[1]) || 0;
+        const vszKB = parseInt(vals[2]) || 0;
+        const threads = parseInt(vals[3]) || 0;
+        const state = vals[4] || '?';
+        processes.push({
+          processName: activeSession.targetName,
+          pid,
+          cpuPercent: Math.round(cpuPercent * 10) / 10,
+          rssMB: Math.round(rssKB / 1024 * 10) / 10,
+          vszMB: Math.round(vszKB / 1024),
+          threadCount: threads,
+          state,
+          gpuPercent: gpuPids[pid] || undefined,
+          gpuMemMB: gpuPids[pid] || undefined,
+        });
+      }
+
+      return { processes, ts: Date.now() };
+    } catch {
+      return null;
+    }
+  }
 
   async startLogTails(paths: string[]): Promise<void> {
     for (const p of paths) {

@@ -2,6 +2,8 @@
 
 # OmniBreak
 
+[:cn: 中文文档](README_CN.md)
+
 > Visual remote debugging for Linux — break anywhere, any thread, any process.  
 > Like Xcode for ARM64/x86 Linux. No launch.json, no remote agents. Just SSH.
 
@@ -90,8 +92,8 @@ Click **Connect** to test the SSH connection. Once connected, click **Debug**. O
 | Tab | Description |
 |-----|-------------|
 | **Config** | Device management, deploy files, debug targets, remote log paths |
-| **Stats** | CPU / Memory / GPU monitoring (Phase 2) |
-| **Leaks** | Memory leak detection (Phase 3) |
+| **Stats** | Real-time CPU / RSS / VSZ / threads / process state |
+| **Leaks** | Auto heap tracking, leak risk detection, GDB malloc tracing |
 | **Logs** | Real-time log viewer with sub-pages per remote log file |
 
 ## Features
@@ -105,6 +107,8 @@ Click **Connect** to test the SSH connection. Once connected, click **Debug**. O
 - **Crash debugging** — SIGSEGV/SIGABRT trigger automatic backtrace display, session stays alive
 - **GDB commands** — type `!` in Debug Console to run any GDB command (`!bt full`, `!info threads`, etc.)
 - **SSH key or password auth** — both supported, configured per device
+- **Process stats monitoring** — real-time CPU%, RSS, VSZ, thread count, process state per debug session
+- **Memory leak detection** — automatic heap growth tracking with rolling samples and risk assessment (LOW/MEDIUM/HIGH)
 
 ## Troubleshooting
 
@@ -128,6 +132,10 @@ sudo sysctl -w kernel.yama.ptrace_scope=0
 
 Program printf output is written to gdbserver's stdout. Add the log path (e.g. `/tmp/omnibreak-gdb-host.log`) to **Remote logs** in the Config tab, then view it in the Logs tab.
 
+## Related
+
+Check out [OmniBreak Skill](https://github.com/YuMinHui825/omnibreak-skill) — the same remote debugging power as a Claude Code skill. No VSCode needed.
+
 ## License
 
 MIT
@@ -135,3 +143,10 @@ MIT
 ## Author
 
 [shibu](https://github.com/YuMinHui825)
+
+---
+
+<p align="center">
+  <b>If you find OmniBreak useful, please give it a ⭐</b><br/>
+  <a href="https://github.com/YuMinHui825/omnibreak">Star on GitHub</a>
+</p>

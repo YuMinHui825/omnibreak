@@ -1,4 +1,4 @@
-import type { DeviceConfig, OrchestrationConfig, SessionState, LogEntry } from './types';
+import type { DeviceConfig, OrchestrationConfig, SessionState, LogEntry, SystemStats, LeakReport } from './types';
 
 export type WebviewMsg =
   | { type: 'load-devices' }
@@ -6,11 +6,17 @@ export type WebviewMsg =
   | { type: 'delete-device'; id: string }
   | { type: 'test-connection'; deviceId: string }
   | { type: 'start-debug'; config: OrchestrationConfig }
-  | { type: 'disconnect'; deviceId: string };
+  | { type: 'disconnect'; deviceId: string }
+  | { type: 'request-stats' }
+  | { type: 'request-leak-scan' }
+  | { type: 'start-leak-monitor' }
+  | { type: 'stop-leak-monitor' };
 
 export type ExtMsg =
   | { type: 'devices-loaded'; devices: DeviceConfig[] }
   | { type: 'connection-test-result'; deviceId: string; ok: boolean; info: string }
   | { type: 'session-update'; sessions: SessionState[] }
   | { type: 'log'; entry: LogEntry }
-  | { type: 'connection-lost'; deviceId: string };
+  | { type: 'connection-lost'; deviceId: string }
+  | { type: 'stats-update'; stats: SystemStats | null }
+  | { type: 'leak-update'; report: LeakReport | null };

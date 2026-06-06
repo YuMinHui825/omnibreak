@@ -69,6 +69,44 @@ export interface SessionState {
   startedAt: number;
 }
 
+export interface ProcessStats {
+  processName: string;
+  pid: number;
+  cpuPercent: number;
+  rssMB: number;
+  vszMB: number;
+  threadCount: number;
+  state: string;
+  gpuPercent?: number;
+  gpuMemMB?: number;
+}
+
+export interface SystemStats {
+  processes: ProcessStats[];
+  ts: number;
+}
+
+export interface MemorySnapshot {
+  heapKB: number;
+  stackKB: number;
+  dataKB: number;
+  rssKB: number;
+  vszKB: number;
+  ts: number;
+}
+
+export interface LeakReport {
+  processName: string;
+  pid: number;
+  current: MemorySnapshot;
+  baseline?: MemorySnapshot;
+  heapDeltaKB: number;
+  rssGrowthRate: number;
+  risk: 'none' | 'low' | 'medium' | 'high';
+  sampleCount: number;
+  startedAt: number;
+}
+
 export type LogLevel = 'info' | 'warn' | 'error' | 'success';
 
 export interface LogEntry {

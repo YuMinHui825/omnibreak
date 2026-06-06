@@ -2,6 +2,8 @@
 
 # OmniBreak
 
+[English](README.md)
+
 > Linux 远程可视化调试——任意位置打断点，任意线程，任意进程。  
 > 像 Xcode 一样调试 ARM64/x86 Linux。无需 launch.json，无需远程 agent。只要 SSH。
 
@@ -90,8 +92,8 @@ code --install-extension omnibreak-0.2.0-beta.vsix
 | 标签 | 说明 |
 |-----|-------------|
 | **Config** | 设备管理、部署文件、调试目标、远程日志路径 |
-| **Stats** | CPU / 内存 / GPU 监控（Phase 2） |
-| **Leaks** | 内存泄漏检测（Phase 3） |
+| **Stats** | 实时 CPU / RSS / VSZ / 线程数 / 进程状态 |
+| **Leaks** | 自动堆内存追踪、泄漏风险评估、GDB malloc 调用栈追踪 |
 | **Logs** | 实时日志查看，每个远程日志文件一个子页面 |
 
 ## 功能特性
@@ -105,6 +107,8 @@ code --install-extension omnibreak-0.2.0-beta.vsix
 - **崩溃调试** — SIGSEGV/SIGABRT 自动打印完整堆栈，调试会话保持活跃
 - **GDB 命令** — Debug Console 中输入 `!` 执行任意 GDB 命令
 - **SSH 密钥或密码认证** — 两种方式都支持，按设备配置
+- **进程统计监控** — 实时显示每个调试进程的 CPU%、RSS、VSZ、线程数、进程状态
+- **内存泄漏检测** — 自动堆内存增长追踪，滚动采样评估泄漏风险等级（低/中/高）
 
 ## Troubleshooting
 
@@ -128,6 +132,10 @@ sudo sysctl -w kernel.yama.ptrace_scope=0
 
 程序 printf 输出写在 gdbserver 的 stdout 里。在 Config 标签页的 **Remote logs** 中添加日志路径（如 `/tmp/omnibreak-gdb-host.log`），然后在 Logs 标签页查看。
 
+## 相关项目
+
+看看 [OmniBreak Skill](https://github.com/YuMinHui825/omnibreak-skill) — 同样的远程调试能力，作为 Claude Code Skill 使用，无需 VSCode。
+
 ## License
 
 MIT
@@ -135,3 +143,10 @@ MIT
 ## 作者
 
 [shibu](https://github.com/YuMinHui825)
+
+---
+
+<p align="center">
+  <b>如果觉得有用，点个 ⭐ 支持一下</b><br/>
+  <a href="https://github.com/YuMinHui825/omnibreak">去 GitHub 点 Star</a>
+</p>

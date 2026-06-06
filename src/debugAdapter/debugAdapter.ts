@@ -133,7 +133,7 @@ class OmniBreakSession extends DebugSession {
     this.gdb!.on('exit', () => { try { tail.kill(); } catch {} });
   }
 
-  // ═══ LAUNCH ═══
+  // === LAUNCH ===
   protected async launchRequest(r: DebugProtocol.LaunchResponse, args: OmniBreakConfig): Promise<void> {
     const c = this.resolve(args);
     this.sourceMapper = new SourceMapper(args.sourceFileMap || {});
@@ -171,7 +171,7 @@ class OmniBreakSession extends DebugSession {
     } catch (err) { this.sendEvent(new OutputEvent(`Launch failed: ${err}\n`, 'stderr')); this.sendErrorResponse(r, 1, `Launch failed: ${err}`); }
   }
 
-  // ═══ ATTACH ═══
+  // === ATTACH ===
   protected async attachRequest(r: DebugProtocol.AttachResponse, args: OmniBreakConfig): Promise<void> {
     const c = this.resolve(args);
     this.sourceMapper = new SourceMapper(args.sourceFileMap || {});
@@ -217,7 +217,7 @@ class OmniBreakSession extends DebugSession {
     } catch (err) { this.sendEvent(new OutputEvent(`Attach failed: ${err}\n`, 'stderr')); this.sendErrorResponse(r, 1, `Attach failed: ${err}`); }
   }
 
-  // ═══ DAP HANDLERS ═══
+  // === DAP HANDLERS ===
   protected async setBreakPointsRequest(r: DebugProtocol.SetBreakpointsResponse, args: DebugProtocol.SetBreakpointsArguments): Promise<void> {
     if (!this.gdb) { this.sendResponse(r); return; }
     if (!this.binaryLoaded) { this.pendingBreakpoints.push(args); r.body = { breakpoints: (args.breakpoints || []).map(bp => ({ verified: true, line: bp.line, column: bp.column, source: args.source } as DebugProtocol.Breakpoint)) }; this.sendResponse(r); return; }
