@@ -107,6 +107,14 @@ export interface LeakReport {
   startedAt: number;
 }
 
+/** Perfetto trace capture result */
+export interface TraceCaptureResult {
+  output: string;
+  sizeBytes: number;
+  remoteHost: string;
+  durationSec: number;
+}
+
 export type LogLevel = 'info' | 'warn' | 'error' | 'success';
 
 export interface LogEntry {

@@ -1,4 +1,4 @@
-import type { DeviceConfig, OrchestrationConfig, SessionState, LogEntry, SystemStats, LeakReport } from './types';
+import type { DeviceConfig, OrchestrationConfig, SessionState, LogEntry, SystemStats, LeakReport, TraceCaptureResult } from './types';
 
 export type WebviewMsg =
   | { type: 'load-devices' }
@@ -10,7 +10,8 @@ export type WebviewMsg =
   | { type: 'request-stats' }
   | { type: 'request-leak-scan' }
   | { type: 'start-leak-monitor' }
-  | { type: 'stop-leak-monitor' };
+  | { type: 'stop-leak-monitor' }
+  | { type: 'start-trace'; duration: number; useSudo: boolean; startCmd?: string };
 
 export type ExtMsg =
   | { type: 'devices-loaded'; devices: DeviceConfig[] }
@@ -19,4 +20,5 @@ export type ExtMsg =
   | { type: 'log'; entry: LogEntry }
   | { type: 'connection-lost'; deviceId: string }
   | { type: 'stats-update'; stats: SystemStats | null }
-  | { type: 'leak-update'; report: LeakReport | null };
+  | { type: 'leak-update'; report: LeakReport | null }
+  | { type: 'trace-result'; result: TraceCaptureResult | null; error?: string };

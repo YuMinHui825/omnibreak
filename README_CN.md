@@ -94,6 +94,7 @@ code --install-extension omnibreak-0.2.0-beta.vsix
 | **Config** | 设备管理、部署文件、调试目标、远程日志路径 |
 | **Stats** | 实时 CPU / RSS / VSZ / 线程数 / 进程状态 |
 | **Leaks** | 自动堆内存追踪、泄漏风险评估、GDB malloc 调用栈追踪 |
+| **Trace** | Perfetto 系统级 trace 采集 — CPU 调度、GPU 事件（自动检测）、进程快照 |
 | **Logs** | 实时日志查看，每个远程日志文件一个子页面 |
 
 ## 功能特性
@@ -109,6 +110,7 @@ code --install-extension omnibreak-0.2.0-beta.vsix
 - **SSH 密钥或密码认证** — 两种方式都支持，按设备配置
 - **进程统计监控** — 实时显示每个调试进程的 CPU%、RSS、VSZ、线程数、进程状态
 - **内存泄漏检测** — 自动堆内存增长追踪，滚动采样评估泄漏风险等级（低/中/高）
+- **系统级 Trace 采集** — 一键 Perfetto tracebox 采集；自动检测 GPU ftrace 事件，记录所有进程的 CPU 调度、进程快照和系统信息。多 GPU 环境完整支持。输出 `.pftrace` 文件，拖入 [ui.perfetto.dev](https://ui.perfetto.dev) 可视化查看
 
 ## Troubleshooting
 
@@ -131,6 +133,14 @@ sudo sysctl -w kernel.yama.ptrace_scope=0
 ### 程序输出不显示
 
 程序 printf 输出写在 gdbserver 的 stdout 里。在 Config 标签页的 **Remote logs** 中添加日志路径（如 `/tmp/omnibreak-gdb-host.log`），然后在 Logs 标签页查看。
+
+### Trace 采集为空或看不到目标进程
+
+确保勾选 **Use sudo**（ftrace 需要 root 权限）。对于短时运行的程序，填写 **Start command** 字段——trace 先启动、再执行命令，确保进程完整生命周期被捕获。首次采集会下载 tracebox（约 20MB），耗时较长。
+
+### Trace 中看不到 GPU 事件
+
+GPU ftrace 事件会自动从 `/sys/kernel/tracing/events/` 检测（i915、mali、kgsl、amdgpu、virtio_gpu、drm 等）。事件只在 GPU 实际工作时触发——无渲染的无头 VM 不会有 GPU 事件。可查看 OmniBreak 输出通道中的 `Detected GPU:` 日志确认检测结果。核显 + 独显双卡环境完整支持。
 
 ## 相关项目
 

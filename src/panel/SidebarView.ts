@@ -4,6 +4,7 @@ import { SessionStateManager } from './SessionStateManager';
 import { Orchestrator } from '../orchestrator/Orchestrator';
 import type { SessionState, LogEntry } from '../shared/types';
 import type { ExtMsg, WebviewMsg } from '../shared/ipc';
+import { captureTrace } from '../orchestrator/traceCapture';
 
 export class SidebarView implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView;
@@ -32,6 +33,19 @@ export class SidebarView implements vscode.WebviewViewProvider {
         case 'request-leak-scan':{const report=await this.orchestrator.collectLeakReport();this.post({type:'leak-update',report});break;}
         case 'start-leak-monitor':{break;}
         case 'stop-leak-monitor':{break;}
+        case 'start-trace':{
+          const ssh = this.orchestrator.getSshConnection();
+          if(!ssh){this.post({type:'trace-result',result:null,error:'No active SSH connection. Start debugging first.'});break;}
+          this.post({type:'log',entry:{level:'info',text:'Starting Perfetto trace capture...',ts:Date.now()}});
+          try{
+            const result = await captureTrace(ssh,{
+              durationSec:m.duration||10,
+              useSudo:!!m.useSudo,
+              startCmd:m.startCmd,
+            },(msg)=>{this.post({type:'log',entry:{level:'info',text:msg,ts:Date.now()}})});
+            this.post({type:'trace-result',result});
+          }catch(e:any){this.post({type:'trace-result',result:null,error:e.message});}
+          break;}
               }
     });
     wv.webview.html=H();
@@ -78,7 +92,7 @@ hr{border:none;border-top:1px solid var(--bd);margin:10px 0}
 .sess .name{font-weight:600;flex:1}.sess .info{color:var(--ds);font-size:10px}
 [title]{position:relative}[title]:hover::after{content:attr(title);position:fixed;background:var(--in);color:var(--fg);border:1px solid var(--bd);border-radius:5px;padding:5px 10px;font-size:11px;white-space:nowrap;z-index:9999;pointer-events:none;left:var(--mx,0);top:var(--my,0);transform:translate(10px,-100%)}
 </style></head><body>
-<div id="tabs" class="tabs"><button class="tab on" data-t="config">Config</button><button class="tab" data-t="stats">Stats</button><button class="tab" data-t="leaks">Leaks</button><button class="tab" data-t="logs">Logs</button></div>
+<div id="tabs" class="tabs"><button class="tab on" data-t="config">Config</button><button class="tab" data-t="stats">Stats</button><button class="tab" data-t="leaks">Leaks</button><button class="tab" data-t="trace">Trace</button><button class="tab" data-t="logs">Logs</button></div>
 <div id="diag" style="padding:4px 8px;font-size:10px;color:#e5534b;display:none"></div>
 <div id="root" class="content">Loading...</div>
 <script>
@@ -86,7 +100,7 @@ hr{border:none;border-top:1px solid var(--bd);margin:10px 0}
 var diag=document.getElementById('diag');
 function die(m){diag.textContent='Failed to load OmniBreak panel: '+m;diag.style.display='block';console.warn(m)}
 try{var v=acquireVsCodeApi(),saved=v.getState()||{};}catch(e){die('acquireVsCodeApi: '+e.message);return}
-var devices=[],sessions=[],logs=saved.logs||[],tab='config',sel=saved.sel||'',ed=null,sf=false,conn=saved.conn||'',logView='actions',busy=false,stats=null,statsTimer=null,leak=null,leakTimer=null;
+var devices=[],sessions=[],logs=saved.logs||[],tab='config',sel=saved.sel||'',ed=null,sf=false,conn=saved.conn||'',logView='actions',busy=false,stats=null,statsTimer=null,leak=null,leakTimer=null,traceRes=null,traceBusy=false;
 var deploy=[],targets=[],rlogs=saved.rlogs||[];if(saved.deploy&&saved.deploy.length)deploy=saved.deploy;if(saved.targets&&saved.targets.length)targets=saved.targets;
 var fs={n:'',h:'',u:'root',p:'22',pw:'',sp:'',g:'/usr/bin/gdb-multiarch'};
 
@@ -100,9 +114,10 @@ window.addEventListener('message',function(e){var m=e.data;
   else if(m.type==='connection-lost'){conn='';busy=false;if(tab==='config')R()}
   else if(m.type==='stats-update'){stats=m.stats;if(tab==='stats')R()}
   else if(m.type==='leak-update'){leak=m.report;if(tab==='leaks')R()}
+else if(m.type==='trace-result'){traceBusy=false;traceRes=m.result;if(m.error){logs.push({level:'error',text:'Trace: '+m.error,ts:Date.now()})}R()}
 });
 
-function R(){var r=document.getElementById('root');r.innerHTML='';if(tab==='config')RC(r);else if(tab==='stats')RS(r);else if(tab==='leaks')RLk(r);else if(tab==='logs')RL(r);try{v.setState({deploy:deploy,targets:targets,conn:conn,sel:sel,logs:logs.slice(-200),rlogs:rlogs})}catch(e){}}
+function R(){var r=document.getElementById('root');r.innerHTML='';if(tab==='config')RC(r);else if(tab==='stats')RS(r);else if(tab==='leaks')RLk(r);else if(tab==='trace')Tr(r);else if(tab==='logs')RL(r);try{v.setState({deploy:deploy,targets:targets,conn:conn,sel:sel,logs:logs.slice(-200),rlogs:rlogs})}catch(e){}}
 
 function RC(r){
   r.appendChild(E('div',{class:'hd'},[E('span',{T:'Devices ('+devices.length+')'})]));
@@ -197,6 +212,31 @@ function RLk(r){
     r.appendChild(guide);
   }
   r.appendChild(E('div',{style:{fontSize:'10px',color:'var(--ds)',textAlign:'center',marginTop:'12px'}},['Samples: '+leak.sampleCount+' | Updated: '+new Date(leak.current.ts).toLocaleTimeString()]));
+}
+function Tr(r){
+  var hd=E('div',{class:'hd'});hd.appendChild(E('span',{T:'Perfetto Trace Capture'}));r.appendChild(hd);
+  var card=E('div',{class:'card'});
+  card.appendChild(E('label',{class:'lbl',T:'Duration (seconds)'}));
+  card.appendChild(E('input',{class:'inp',type:'number',value:'10',id:'trace-dur',style:{marginBottom:'8px'}}));
+  card.appendChild(E('label',{class:'lbl',T:'Start command (optional, runs on remote after trace begins)'}));
+  card.appendChild(E('input',{class:'inp',placeholder:'Optional: command to run on remote after trace starts',id:'trace-cmd',style:{marginBottom:'8px'}}));
+  var row=E('div',{class:'row',style:{alignItems:'center',gap:'8px',marginBottom:'8px'}});
+  row.appendChild(E('label',{class:'lbl',style:{display:'flex',alignItems:'center',gap:'4px'}},['Use sudo',E('input',{type:'checkbox',id:'trace-sudo',checked:true})]));
+  row.appendChild(E('button',{class:'btn btn-p',T:traceBusy?'Capturing...':'Start Capture',disabled:traceBusy,onclick:function(){
+    if(traceBusy)return;traceBusy=true;traceRes=null;R();
+    var dur=parseInt(document.getElementById('trace-dur').value)||10;
+    var sc=document.getElementById('trace-cmd').value;
+    var su=document.getElementById('trace-sudo').checked;
+    v.postMessage({type:'start-trace',duration:dur,useSudo:su,startCmd:sc||undefined});
+  }}));
+  card.appendChild(row);r.appendChild(card);
+  if(traceRes){
+    var res=E('div',{class:'card',style:{marginTop:'8px',background: traceRes.sizeBytes>0?'#1a3d1a':'#3d1a1a'}});
+    res.appendChild(E('div',{style:{fontWeight:'600',fontSize:'11px',marginBottom:'4px',color:'#4caf50'},T:'Capture Complete'}));
+    res.appendChild(E('div',{style:{fontSize:'11px',lineHeight:'1.6'},H:'<b>File:</b> '+traceRes.output+'<br><b>Size:</b> '+(traceRes.sizeBytes/1024).toFixed(1)+' KB<br><b>Host:</b> '+traceRes.remoteHost+'<br><b>Duration:</b> '+traceRes.durationSec+'s'}));
+    res.appendChild(E('div',{style:{marginTop:'8px',fontSize:'10px',color:'var(--ds)'},T:'Drag .pftrace into https://ui.perfetto.dev to view'}));
+    r.appendChild(res);
+  }
 }
 function RL(r){
   var hd=E('div',{class:'hd'});hd.appendChild(E('span',{T:'Logs'}));hd.appendChild(E('button',{class:'btn btn-xs btn-p',T:'Clear',style:{marginLeft:'auto'},onclick:function(){logs=[];R()}}));r.appendChild(hd);

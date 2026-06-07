@@ -94,6 +94,7 @@ Click **Connect** to test the SSH connection. Once connected, click **Debug**. O
 | **Config** | Device management, deploy files, debug targets, remote log paths |
 | **Stats** | Real-time CPU / RSS / VSZ / threads / process state |
 | **Leaks** | Auto heap tracking, leak risk detection, GDB malloc tracing |
+| **Trace** | Perfetto system-wide trace capture — CPU scheduling, GPU events (auto-detected), process snapshots |
 | **Logs** | Real-time log viewer with sub-pages per remote log file |
 
 ## Features
@@ -109,6 +110,7 @@ Click **Connect** to test the SSH connection. Once connected, click **Debug**. O
 - **SSH key or password auth** — both supported, configured per device
 - **Process stats monitoring** — real-time CPU%, RSS, VSZ, thread count, process state per debug session
 - **Memory leak detection** — automatic heap growth tracking with rolling samples and risk assessment (LOW/MEDIUM/HIGH)
+- **System trace capture** — one-click Perfetto tracebox capture; auto-detects GPU ftrace events, records CPU scheduling of all processes, process snapshots, and system info. Multi-GPU systems supported. Outputs `.pftrace` files viewable in [ui.perfetto.dev](https://ui.perfetto.dev)
 
 ## Troubleshooting
 
@@ -131,6 +133,14 @@ sudo sysctl -w kernel.yama.ptrace_scope=0
 ### Program output not showing
 
 Program printf output is written to gdbserver's stdout. Add the log path (e.g. `/tmp/omnibreak-gdb-host.log`) to **Remote logs** in the Config tab, then view it in the Logs tab.
+
+### Trace capture is empty or missing processes
+
+Ensure `Use sudo` is checked (ftrace requires root). For short-lived programs, use the **Start command** field — trace starts first, then the command runs, ensuring the full process lifecycle is captured. First capture downloads tracebox (~20MB) which may take extra time.
+
+### GPU events not showing in trace
+
+GPU ftrace events are auto-detected from `/sys/kernel/tracing/events/` (i915, mali, kgsl, amdgpu, virtio_gpu, drm, etc.). Events only fire when the GPU is actually doing work — a headless VM without rendering will have no GPU events. To verify detection, check the OmniBreak output channel for `Detected GPU:` log lines. Multi-GPU systems (integrated + discrete) are fully supported.
 
 ## Related
 

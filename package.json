@@ -2,7 +2,7 @@
   "name": "omnibreak",
   "displayName": "OmniBreak",
   "description": "Like Xcode for Linux. Point VSCode at any ARM64/x86 machine and debug. Multi-process, one-click restart-and-attach, no remote agents.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "shibu",
   "license": "MIT",
   "repository": {

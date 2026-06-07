@@ -106,6 +106,21 @@ export class SshConnection {
     });
   }
 
+  async pullFile(remotePath: string, localPath: string, timeout = 60000): Promise<void> {
+    try { await this.connect(); } catch (e: any) { throw new Error(`SSH failed: ${e.message}`); }
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => { reject(new Error('SCP pull timeout')); }, timeout);
+      this.client.sftp((err, sftp) => {
+        if (err) { clearTimeout(timer); reject(err); return; }
+        const rs = sftp.createReadStream(remotePath);
+        const chunks: Buffer[] = [];
+        rs.on('data', (d: Buffer) => chunks.push(d));
+        rs.on('end', () => { clearTimeout(timer); require('fs').writeFileSync(localPath, Buffer.concat(chunks)); resolve(); });
+        rs.on('error', (e: Error) => { clearTimeout(timer); reject(e); });
+      });
+    });
+  }
+
   async close(): Promise<void> {
     this.stopHeartbeat();
     return new Promise((resolve) => {
