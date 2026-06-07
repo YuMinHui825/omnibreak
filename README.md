@@ -49,7 +49,7 @@ That's it. Both packages are in standard Ubuntu/Debian repos.
 ### Download & Install
 
 ```bash
-code --install-extension omnibreak-0.2.0-beta.vsix
+code --install-extension omnibreak-0.3.0.vsix
 ```
 
 ### Build from Source
@@ -60,7 +60,7 @@ cd omnibreak
 npm install
 npm run compile
 npm run package
-code --install-extension omnibreak-0.2.0-beta.vsix
+code --install-extension omnibreak-0.3.0.vsix
 ```
 
 ## Quick Start

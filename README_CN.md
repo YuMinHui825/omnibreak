@@ -49,7 +49,7 @@ sudo apt install -y gdbserver gdb-multiarch
 ### 直接安装
 
 ```bash
-code --install-extension omnibreak-0.2.0-beta.vsix
+code --install-extension omnibreak-0.3.0.vsix
 ```
 
 ### 从源码构建
@@ -60,7 +60,7 @@ cd omnibreak
 npm install
 npm run compile
 npm run package
-code --install-extension omnibreak-0.2.0-beta.vsix
+code --install-extension omnibreak-0.3.0.vsix
 ```
 
 ## 快速开始
